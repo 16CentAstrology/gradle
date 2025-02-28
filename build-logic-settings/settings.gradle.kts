@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 the original author or authors.
+ * Copyright 2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,37 @@
  * limitations under the License.
  */
 
-rootProject.name = "build-logic-settings"
-
-pluginManagement {
-    includeBuild("../build-logic-commons")
-}
-
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version("0.4.0")
-}
-
 dependencyResolutionManagement {
     repositories {
+        mavenCentral()
         gradlePluginPortal()
     }
 }
 
-include("build-logic-settings-plugin")
+pluginManagement {
+    repositories {
+        maven {
+            url = uri("https://repo.gradle.org/gradle/enterprise-libs-release-candidates")
+            content {
+                val rcAndMilestonesPattern = "\\d{1,2}?\\.\\d{1,2}?(\\.\\d{1,2}?)?-((rc-\\d{1,2}?)|(milestone-\\d{1,2}?))"
+                // GE plugin marker artifact
+                includeVersionByRegex("com.gradle.develocity", "com.gradle.develocity.gradle.plugin", rcAndMilestonesPattern)
+                // GE plugin jar
+                includeVersionByRegex("com.gradle", "develocity-gradle-plugin", rcAndMilestonesPattern)
+            }
+        }
+
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id("com.gradle.develocity").version("3.19.2") // Run `java build-logic-settings/UpdateDevelocityPluginVersion.java <new-version>` to update
+    id("io.github.gradle.gradle-enterprise-conventions-plugin").version("0.10.2")
+    id("org.gradle.toolchains.foojay-resolver-convention").version("0.9.0")
+}
+
+include("build-environment")
+include("configuration-cache-compatibility")
+
+rootProject.name = "build-logic-settings"

@@ -18,15 +18,20 @@ package org.gradle.api.internal.cache;
 
 import org.gradle.api.cache.CacheConfigurations;
 import org.gradle.api.cache.Cleanup;
+import org.gradle.api.invocation.Gradle;
 import org.gradle.api.provider.Property;
 import org.gradle.api.provider.Provider;
 import org.gradle.cache.CleanupFrequency;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
 
+@ServiceScope({Scope.UserHome.class, Scope.BuildSession.class, Scope.Settings.class})
 public interface CacheConfigurationsInternal extends CacheConfigurations {
     int DEFAULT_MAX_AGE_IN_DAYS_FOR_RELEASED_DISTS = 30;
     int DEFAULT_MAX_AGE_IN_DAYS_FOR_SNAPSHOT_DISTS = 7;
     int DEFAULT_MAX_AGE_IN_DAYS_FOR_DOWNLOADED_CACHE_ENTRIES = 30;
     int DEFAULT_MAX_AGE_IN_DAYS_FOR_CREATED_CACHE_ENTRIES = 7;
+    int DEFAULT_MAX_AGE_IN_DAYS_FOR_BUILD_CACHE_ENTRIES = 7;
 
     @Override
     CacheResourceConfigurationInternal getReleasedWrappers();
@@ -36,13 +41,15 @@ public interface CacheConfigurationsInternal extends CacheConfigurations {
     CacheResourceConfigurationInternal getDownloadedResources();
     @Override
     CacheResourceConfigurationInternal getCreatedResources();
+    @Override
+    CacheResourceConfigurationInternal getBuildCache();
 
     @Override
     Property<Cleanup> getCleanup();
 
     Provider<CleanupFrequency> getCleanupFrequency();
 
-    void finalizeConfigurationValues();
+    void finalizeConfiguration(Gradle gradle);
 
     /**
      * Synchronizes the property values of the provided cache configurations with those of this cache configuration

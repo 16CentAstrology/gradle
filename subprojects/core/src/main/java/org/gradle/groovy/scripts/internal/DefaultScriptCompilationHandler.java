@@ -33,6 +33,11 @@ import org.codehaus.groovy.syntax.SyntaxException;
 import org.gradle.api.Action;
 import org.gradle.api.GradleException;
 import org.gradle.api.internal.initialization.ClassLoaderScope;
+import org.gradle.api.problems.ProblemId;
+import org.gradle.api.problems.Problems;
+import org.gradle.api.problems.Severity;
+import org.gradle.api.problems.internal.GradleCoreProblemGroup;
+import org.gradle.api.problems.internal.InternalProblems;
 import org.gradle.configuration.ImportsReader;
 import org.gradle.groovy.scripts.ScriptCompilationException;
 import org.gradle.groovy.scripts.ScriptSource;
@@ -40,9 +45,9 @@ import org.gradle.groovy.scripts.Transformer;
 import org.gradle.initialization.ClassLoaderScopeOrigin;
 import org.gradle.internal.IoActions;
 import org.gradle.internal.UncheckedException;
-import org.gradle.internal.agents.InstrumentingClassLoader;
 import org.gradle.internal.classloader.ClassLoaderUtils;
 import org.gradle.internal.classloader.ImplementationHashAware;
+import org.gradle.internal.classloader.InstrumentingClassLoader;
 import org.gradle.internal.classloader.TransformErrorHandler;
 import org.gradle.internal.classloader.TransformReplacer;
 import org.gradle.internal.classloader.VisitableURLClassLoader;
@@ -53,13 +58,17 @@ import org.gradle.internal.hash.HashCode;
 import org.gradle.internal.serialize.Serializer;
 import org.gradle.internal.serialize.kryo.KryoBackedDecoder;
 import org.gradle.internal.serialize.kryo.KryoBackedEncoder;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
 import org.gradle.internal.time.Time;
 import org.gradle.internal.time.Timer;
 import org.gradle.util.internal.GFileUtils;
+import org.gradle.util.internal.TextUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
+import javax.inject.Inject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -73,6 +82,7 @@ import java.util.List;
 import java.util.Map;
 
 @SuppressWarnings("deprecation")
+@ServiceScope(Scope.Build.class)
 public class DefaultScriptCompilationHandler implements ScriptCompilationHandler {
     private final Logger logger = LoggerFactory.getLogger(DefaultScriptCompilationHandler.class);
     private static final NoOpGroovyResourceLoader NO_OP_GROOVY_RESOURCE_LOADER = new NoOpGroovyResourceLoader();
@@ -83,14 +93,17 @@ public class DefaultScriptCompilationHandler implements ScriptCompilationHandler
     private final Deleter deleter;
     private final Map<String, List<String>> simpleNameToFQN;
 
+    @Inject
     public DefaultScriptCompilationHandler(Deleter deleter, ImportsReader importsReader) {
         this.deleter = deleter;
         this.simpleNameToFQN = importsReader.getSimpleNameToFullClassNamesMapping();
     }
 
     @Override
-    public void compileToDir(ScriptSource source, ClassLoader classLoader, File classesDir, File metadataDir, CompileOperation<?> extractingTransformer,
-                             Class<? extends Script> scriptBaseClass, Action<? super ClassNode> verifier) {
+    public void compileToDir(
+        ScriptSource source, ClassLoader classLoader, File classesDir, File metadataDir, CompileOperation<?> extractingTransformer,
+        Class<? extends Script> scriptBaseClass, Action<? super ClassNode> verifier
+    ) {
         Timer clock = Time.startTimer();
         try {
             deleter.ensureEmptyDirectory(classesDir);
@@ -114,8 +127,10 @@ public class DefaultScriptCompilationHandler implements ScriptCompilationHandler
         logger.debug("Timing: Writing script to cache at {} took: {}", classesDir.getAbsolutePath(), clock.getElapsed());
     }
 
-    private void compileScript(ScriptSource source, ClassLoader classLoader, CompilerConfiguration configuration, File metadataDir,
-                               final CompileOperation<?> extractingTransformer, final Action<? super ClassNode> customVerifier) {
+    private void compileScript(
+        ScriptSource source, ClassLoader classLoader, CompilerConfiguration configuration, File metadataDir,
+        final CompileOperation<?> extractingTransformer, final Action<? super ClassNode> customVerifier
+    ) {
         final Transformer transformer = extractingTransformer != null ? extractingTransformer.getTransformer() : null;
         logger.info("Compiling {} using {}.", source.getDisplayName(), transformer != null ? transformer.getClass().getSimpleName() : "no transformer");
 
@@ -123,8 +138,10 @@ public class DefaultScriptCompilationHandler implements ScriptCompilationHandler
         final PackageStatementDetector packageDetector = new PackageStatementDetector();
         GroovyClassLoader groovyClassLoader = new GroovyClassLoader(classLoader, configuration, false) {
             @Override
-            protected CompilationUnit createCompilationUnit(CompilerConfiguration compilerConfiguration,
-                                                            CodeSource codeSource) {
+            protected CompilationUnit createCompilationUnit(
+                CompilerConfiguration compilerConfiguration,
+                CodeSource codeSource
+            ) {
 
                 CompilationUnit compilationUnit = new CustomCompilationUnit(compilerConfiguration, codeSource, customVerifier, this, simpleNameToFQN);
 
@@ -158,6 +175,11 @@ public class DefaultScriptCompilationHandler implements ScriptCompilationHandler
         } finally {
             ClassLoaderUtils.tryClose(groovyClassLoader);
         }
+    }
+
+    @Inject
+    protected Problems getProblemsService() {
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     private <M> void serializeMetadata(ScriptSource scriptSource, CompileOperation<M> extractingTransformer, File metadataDir, boolean emptyScript, boolean hasMethods) {
@@ -196,11 +218,18 @@ public class DefaultScriptCompilationHandler implements ScriptCompilationHandler
         }
 
         SyntaxException syntaxError = e.getErrorCollector().getSyntaxError(0);
-        Integer lineNumber = syntaxError == null ? null : syntaxError.getLine();
-        throw new ScriptCompilationException(String.format("Could not compile %s.", source.getDisplayName()), e, source, lineNumber);
+        int lineNumber = syntaxError == null ? -1 : syntaxError.getLine();
+        String message = String.format("Could not compile %s.", source.getDisplayName());
+        ProblemId problemId = ProblemId.create(TextUtil.screamingSnakeToKebabCase("compilation-failed"), "Groovy DSL script compilation problem", GradleCoreProblemGroup.compilation().groovyDsl());
+        throw ((InternalProblems) getProblemsService()).getInternalReporter().throwing(new ScriptCompilationException(message, e, source, lineNumber), problemId, builder -> builder
+            .contextualLabel(message)
+            .lineInFileLocation(source.getFileName(), lineNumber)
+            .severity(Severity.ERROR)
+            .withException(new ScriptCompilationException(message, e, source, lineNumber))
+        );
     }
 
-    private CompilerConfiguration createBaseCompilerConfiguration(Class<? extends Script> scriptBaseClass) {
+    private static CompilerConfiguration createBaseCompilerConfiguration(Class<? extends Script> scriptBaseClass) {
         CompilerConfiguration configuration = new CompilerConfiguration();
         configuration.setScriptBaseClass(scriptBaseClass.getName());
         configuration.setTargetBytecode(CompilerConfiguration.JDK8);
@@ -208,8 +237,10 @@ public class DefaultScriptCompilationHandler implements ScriptCompilationHandler
     }
 
     @Override
-    public <T extends Script, M> CompiledScript<T, M> loadFromDir(ScriptSource source, HashCode sourceHashCode, ClassLoaderScope targetScope, ClassPath scriptClassPath,
-                                                                  File metadataCacheDir, CompileOperation<M> transformer, Class<T> scriptBaseClass) {
+    public <T extends Script, M> CompiledScript<T, M> loadFromDir(
+        ScriptSource source, HashCode sourceHashCode, ClassLoaderScope targetScope, ClassPath scriptClassPath,
+        File metadataCacheDir, CompileOperation<M> transformer, Class<T> scriptBaseClass
+    ) {
         File metadataFile = new File(metadataCacheDir, METADATA_FILE_NAME);
         try (KryoBackedDecoder decoder = new KryoBackedDecoder(new FileInputStream(metadataFile))) {
             byte flags = decoder.readByte();

@@ -16,8 +16,6 @@
 
 package org.gradle.deployment.internal;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import org.gradle.BuildResult;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.logging.Logging;
@@ -27,31 +25,36 @@ import org.gradle.internal.concurrent.CompositeStoppable;
 import org.gradle.internal.concurrent.Stoppable;
 import org.gradle.internal.operations.BuildOperationContext;
 import org.gradle.internal.operations.BuildOperationDescriptor;
-import org.gradle.internal.operations.BuildOperationExecutor;
+import org.gradle.internal.operations.BuildOperationRunner;
 import org.gradle.internal.operations.CallableBuildOperation;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+@ServiceScope(Scope.BuildSession.class)
 public class DefaultDeploymentRegistry implements DeploymentRegistryInternal, PendingChangesListener, Stoppable {
     private static final Logger LOGGER = Logging.getLogger(DefaultDeploymentRegistry.class);
 
     private final Lock lock = new ReentrantLock();
-    private final Map<String, RegisteredDeployment> deployments = Maps.newHashMap();
+    private final Map<String, RegisteredDeployment> deployments = new HashMap<>();
     private final PendingChangesManager pendingChangesManager;
     private final PendingChanges pendingChanges;
-    private final BuildOperationExecutor buildOperationExecutor;
+    private final BuildOperationRunner buildOperationRunner;
     private final ObjectFactory objectFactory;
     private final ContinuousExecutionGate continuousExecutionGate = new DefaultContinuousExecutionGate();
     private boolean stopped;
     private boolean anyStarted;
 
-    public DefaultDeploymentRegistry(PendingChangesManager pendingChangesManager, BuildOperationExecutor buildOperationExecutor, ObjectFactory objectFactory) {
+    public DefaultDeploymentRegistry(PendingChangesManager pendingChangesManager, BuildOperationRunner buildOperationRunner, ObjectFactory objectFactory) {
         this.pendingChangesManager = pendingChangesManager;
-        this.buildOperationExecutor = buildOperationExecutor;
+        this.buildOperationRunner = buildOperationRunner;
         this.objectFactory = objectFactory;
         this.pendingChanges = new PendingChanges();
         pendingChangesManager.addListener(this);
@@ -69,7 +72,7 @@ public class DefaultDeploymentRegistry implements DeploymentRegistryInternal, Pe
         try {
             failIfStopped();
             if (!deployments.containsKey(name)) {
-                return buildOperationExecutor.call(new CallableBuildOperation<T>() {
+                return buildOperationRunner.call(new CallableBuildOperation<T>() {
                     @Override
                     public BuildOperationDescriptor.Builder description() {
                         return BuildOperationDescriptor.displayName("Start deployment '" + name + "'");
@@ -114,7 +117,7 @@ public class DefaultDeploymentRegistry implements DeploymentRegistryInternal, Pe
     public Collection<Deployment> getRunningDeployments() {
         lock.lock();
         try {
-            List<Deployment> runningDeployments = Lists.newArrayList();
+            List<Deployment> runningDeployments = new ArrayList<>();
             for (RegisteredDeployment deployment : deployments.values()) {
                 if (deployment.getHandle().isRunning()) {
                     runningDeployments.add(deployment.getDeployment());

@@ -17,7 +17,8 @@
 package org.gradle.initialization.buildsrc
 
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
-import org.gradle.util.internal.ToBeImplemented
+import org.gradle.integtests.fixtures.ToBeFixedForIsolatedProjects
+import spock.lang.Issue
 
 class BuildSrcTaskExecutionIntegrationTest extends AbstractIntegrationSpec {
     def "can execute a task from buildSrc from the command line"() {
@@ -41,6 +42,7 @@ class BuildSrcTaskExecutionIntegrationTest extends AbstractIntegrationSpec {
     }
 
     def "can execute a task from nested buildSrc from the command line"() {
+        createDirs("nested")
         file("settings.gradle") << """
             includeBuild("nested")
         """
@@ -63,7 +65,6 @@ class BuildSrcTaskExecutionIntegrationTest extends AbstractIntegrationSpec {
         // Task will not run when configuration cache is enabled
     }
 
-    @ToBeImplemented
     def "can exclude a task from buildSrc from the command line"() {
         file("buildSrc/build.gradle") << """
             task something {
@@ -83,9 +84,31 @@ class BuildSrcTaskExecutionIntegrationTest extends AbstractIntegrationSpec {
 
         2.times {
             run("-x", ":buildSrc:jar")
-            // TODO - should exclude these tasks, for consistency with included builds
-//            result.assertTaskNotExecuted(":buildSrc:compileJava")
-//            result.assertTaskNotExecuted(":buildSrc:jar")
+            result.assertTaskNotExecuted(":buildSrc:compileJava")
+            result.assertTaskNotExecuted(":buildSrc:jar")
+        }
+    }
+
+    @Issue("https://github.com/gradle/gradle/issues/23885")
+    @ToBeFixedForIsolatedProjects(because = "allprojects")
+    def "can exclude task from main build when buildSrc is present"() {
+        file("buildSrc/build.gradle").createFile()
+        createDirs("lib")
+        settingsFile """
+            include "lib"
+        """
+        buildFile """
+            allprojects {
+                task thing {
+                    doLast {}
+                }
+            }
+        """
+
+        expect:
+        2.times {
+            run("thing", "-x", ":lib:thing")
+            result.assertTaskNotExecuted(":lib:thing")
         }
     }
 }

@@ -17,6 +17,7 @@
 package org.gradle.api.services
 
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
+import org.gradle.integtests.fixtures.ToBeFixedForIsolatedProjects
 import org.gradle.test.fixtures.server.http.BlockingHttpServer
 import org.junit.Rule
 
@@ -27,6 +28,7 @@ class BuildServiceParallelExecutionIntegrationTest extends AbstractIntegrationSp
     def setup() {
         blockingServer.start()
 
+        createDirs("a", "b", "c")
         settingsFile << """
             include 'a', 'b', 'c'
         """
@@ -42,6 +44,7 @@ class BuildServiceParallelExecutionIntegrationTest extends AbstractIntegrationSp
         """
     }
 
+    @ToBeFixedForIsolatedProjects(because = "allprojects")
     def "tasks run in parallel when no max usages specified"() {
         given:
         withParallelThreads(2)
@@ -65,6 +68,7 @@ class BuildServiceParallelExecutionIntegrationTest extends AbstractIntegrationSp
         run ":a:ping", ":b:ping"
     }
 
+    @ToBeFixedForIsolatedProjects(because = "allprojects")
     def "tasks are not run in parallel when they require an exclusive shared service"() {
         given:
         withParallelThreads(2)
@@ -89,6 +93,7 @@ class BuildServiceParallelExecutionIntegrationTest extends AbstractIntegrationSp
         run ":a:ping", ":b:ping"
     }
 
+    @ToBeFixedForIsolatedProjects(because = "allprojects")
     def "tasks run in parallel when sufficient max usages"() {
         given:
         withParallelThreads(2)
@@ -113,6 +118,7 @@ class BuildServiceParallelExecutionIntegrationTest extends AbstractIntegrationSp
         run ":a:ping", ":b:ping"
     }
 
+    @ToBeFixedForIsolatedProjects(because = "allprojects")
     def "task parallelization is limited by max usages"() {
         given:
         withParallelThreads(3)
@@ -137,6 +143,7 @@ class BuildServiceParallelExecutionIntegrationTest extends AbstractIntegrationSp
         run ":a:ping", ":b:ping", ":c:ping"
     }
 
+    @ToBeFixedForIsolatedProjects(because = "allprojects")
     def "task can use multiple services"() {
         given:
         withParallelThreads(3)

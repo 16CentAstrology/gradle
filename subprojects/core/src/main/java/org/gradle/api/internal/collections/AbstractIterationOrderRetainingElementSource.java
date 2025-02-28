@@ -20,8 +20,9 @@ import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.ints.IntSet;
+import it.unimi.dsi.fastutil.ints.IntSets;
 import org.gradle.api.Action;
 import org.gradle.api.internal.DefaultMutationGuard;
 import org.gradle.api.internal.MutationGuard;
@@ -36,10 +37,12 @@ import org.gradle.api.internal.provider.ProviderInternal;
 import org.gradle.api.specs.Spec;
 import org.gradle.internal.Cast;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.ConcurrentModificationException;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Set;
@@ -47,11 +50,12 @@ import java.util.Set;
 abstract public class AbstractIterationOrderRetainingElementSource<T> implements ElementSource<T> {
     // This set represents the order in which elements are inserted to the store, either actual
     // or provided.  We construct a correct iteration order from this set.
-    private final List<Element<T>> inserted = new ArrayList<Element<T>>();
+    private final List<Element<T>> inserted = new ArrayList<>();
 
-    private final MutationGuard mutationGuard = new DefaultMutationGuard();
+    private final MutationGuard lazyGuard = new DefaultMutationGuard();
 
-    private Action<T> realizeAction;
+    private Action<T> pendingAddedAction;
+    private EventSubscriptionVerifier<T> subscriptionVerifier = type -> false;
 
     protected int modCount;
 
@@ -61,7 +65,12 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
 
     @Override
     public boolean isEmpty() {
-        return inserted.isEmpty();
+        for (Element<T> element : inserted) {
+            if (element.size() != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -149,7 +158,7 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
     }
 
     Element<T> cachingElement(ProviderInternal<? extends T> provider) {
-        final Element<T> element = new Element<T>(provider.getType(), new ElementFromProvider<T>(provider), realizeAction);
+        final Element<T> element = new Element<>(provider.getType(), new ElementFromProvider<>(provider), this::doAddRealized);
         if (provider instanceof ChangingValue) {
             Cast.<ChangingValue<T>>uncheckedNonnullCast(provider).onValueChange(previousValue -> clearCachedElement(element));
         }
@@ -157,12 +166,20 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
     }
 
     Element<T> cachingElement(CollectionProviderInternal<T, ? extends Iterable<T>> provider) {
-        final Element<T> element = new Element<T>(provider.getElementType(), new ElementsFromCollectionProvider<T>(provider), realizeAction);
+        final Element<T> element = new Element<>(provider.getElementType(), new ElementsFromCollectionProvider<>(provider), this::doAddRealized);
         if (provider instanceof ChangingValue) {
             Cast.<ChangingValue<Iterable<T>>>uncheckedNonnullCast(provider).onValueChange(previousValues -> clearCachedElement(element));
         }
         return element;
     }
+
+    private void doAddRealized(T value) {
+        if (addRealized(value) && pendingAddedAction != null) {
+            pendingAddedAction.execute(value);
+        }
+    }
+
+    abstract boolean addRealized(T element);
 
     @Override
     public boolean removePending(ProviderInternal<? extends T> provider) {
@@ -188,18 +205,37 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
     }
 
     @Override
-    public void onRealize(final Action<T> action) {
-        this.realizeAction = action;
+    public void onPendingAdded(final Action<T> action) {
+        this.pendingAddedAction = action;
     }
 
     @Override
-    public MutationGuard getMutationGuard() {
-        return mutationGuard;
+    public void setSubscriptionVerifier(EventSubscriptionVerifier<T> subscriptionVerifier) {
+        this.subscriptionVerifier = subscriptionVerifier;
+    }
+
+    protected boolean addPendingElement(Element<T> element) {
+        boolean added = inserted.add(element);
+        if (subscriptionVerifier.isSubscribed(element.getType())) {
+            element.realize();
+
+            // Ugly backwards-compatibility hack. Previous implementations would notify listeners without
+            // actually telling the ElementSource that the element was realized.
+            // We can avoid this in the future if we make ChangingValue more widespread -- particularly
+            // if we make CollectionProviders implement ChangingValue
+            element.clearCache();
+        }
+        return added;
+    }
+
+    @Override
+    public MutationGuard getLazyBehaviorGuard() {
+        return lazyGuard;
     }
 
     protected class RealizedElementCollectionIterator implements Iterator<T> {
         final List<Element<T>> backingList;
-        final Spec<ValuePointer<T>> acceptanceSpec;
+        final Spec<ValuePointer<?>> acceptanceSpec;
         int nextIndex = -1;
         int nextSubIndex = -1;
         int previousIndex = -1;
@@ -207,7 +243,7 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
         T next;
         int expectedModCount = modCount;
 
-        RealizedElementCollectionIterator(List<Element<T>> backingList, Spec<ValuePointer<T>> acceptanceSpec) {
+        RealizedElementCollectionIterator(List<Element<T>> backingList, Spec<ValuePointer<?>> acceptanceSpec) {
             this.backingList = backingList;
             this.acceptanceSpec = acceptanceSpec;
             updateNext();
@@ -288,14 +324,14 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
     }
 
     protected static class Element<T> extends TypedCollector<T> {
-        private List<T> cache;
-        private final List<T> removedValues = Lists.newArrayList();
-        private final Set<T> realizedValues = Sets.newHashSet();
-        private final Set<Integer> duplicates = Sets.newHashSet(); // TODO IntSet
+        private List<T> cache = null;
+        private List<T> removedValues = null;
+        private IntSet duplicates = IntSets.emptySet();
         private boolean realized;
+
         private final Action<T> realizeAction;
 
-        Element(Class<? extends T> type, Collector<T> delegate, Action<T> realizeAction) {
+        Element(@Nullable Class<? extends T> type, Collector<T> delegate, Action<T> realizeAction) {
             super(type, delegate);
             this.realizeAction = realizeAction;
         }
@@ -316,9 +352,12 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
                 // Collect elements discarding potential side effects aggregated in the returned value
                 super.collectInto(builder);
                 cache = new ArrayList<>(builder.build());
-                cache.removeAll(removedValues);
+                if (removedValues != null) {
+                    cache.removeAll(removedValues);
+                }
                 realized = true;
                 if (realizeAction != null) {
+                    Set<T> realizedValues = new LinkedHashSet<>();
                     for (T value : cache) {
                         if (!realizedValues.contains(value)) {
                             realizeAction.execute(value);
@@ -345,6 +384,9 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
         }
 
         public boolean remove(T value) {
+            if (removedValues == null) {
+                removedValues = new ArrayList<>();
+            }
             removedValues.add(value);
             if (cache != null) {
                 return cache.remove(value);
@@ -357,13 +399,16 @@ abstract public class AbstractIterationOrderRetainingElementSource<T> implements
         }
 
         void setDuplicate(int index) {
+            if (duplicates == IntSets.EMPTY_SET) {
+                duplicates = new IntOpenHashSet(1);
+            }
             duplicates.add(index);
         }
 
         void clearCache() {
             cache = null;
             realized = false;
-            duplicates.clear();
+            duplicates = IntSets.emptySet();
         }
 
         @Override

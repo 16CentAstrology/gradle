@@ -18,6 +18,8 @@ package org.gradle.initialization;
 import org.gradle.StartParameter;
 import org.gradle.api.Action;
 import org.gradle.api.UnknownProjectException;
+import org.gradle.api.cache.CacheConfigurations;
+import org.gradle.api.file.BuildLayout;
 import org.gradle.api.initialization.ConfigurableIncludedBuild;
 import org.gradle.api.initialization.ProjectDescriptor;
 import org.gradle.api.initialization.Settings;
@@ -29,6 +31,7 @@ import org.gradle.api.internal.SettingsInternal;
 import org.gradle.api.internal.cache.CacheConfigurationsInternal;
 import org.gradle.api.internal.file.FileResolver;
 import org.gradle.api.internal.initialization.ClassLoaderScope;
+import org.gradle.api.initialization.SharedModelDefaults;
 import org.gradle.api.internal.initialization.ScriptHandlerFactory;
 import org.gradle.api.internal.plugins.DefaultObjectConfigurationAction;
 import org.gradle.api.internal.plugins.PluginManagerInternal;
@@ -36,7 +39,6 @@ import org.gradle.api.internal.project.AbstractPluginAware;
 import org.gradle.api.internal.project.ProjectRegistry;
 import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.toolchain.management.ToolchainManagement;
-import org.gradle.api.cache.CacheConfigurations;
 import org.gradle.caching.configuration.BuildCacheConfiguration;
 import org.gradle.caching.configuration.internal.BuildCacheConfigurationInternal;
 import org.gradle.configuration.ScriptPluginFactory;
@@ -59,6 +61,10 @@ import javax.inject.Inject;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+
+import static java.time.Instant.now;
+import static org.apache.commons.lang.ArrayUtils.contains;
+import static org.gradle.internal.hash.Hashing.sha512;
 
 public abstract class DefaultSettings extends AbstractPluginAware implements SettingsInternal {
     private ScriptSource settingsScript;
@@ -101,9 +107,19 @@ public abstract class DefaultSettings extends AbstractPluginAware implements Set
         this.settingsScript = settingsScript;
         this.startParameter = startParameter;
         this.services = serviceRegistryFactory.createFor(this);
-        this.rootProjectDescriptor = createProjectDescriptor(null, settingsDir.getName(), settingsDir);
+        this.rootProjectDescriptor = createProjectDescriptor(null, getProjectName(settingsDir), settingsDir);
         this.dependencyResolutionManagement = services.get(DependencyResolutionManagementInternal.class);
         this.toolchainManagement = services.get(ToolchainManagementInternal.class);
+    }
+
+    private static String getProjectName(File settingsDir) {
+        if (contains(File.listRoots(), settingsDir)) {
+            String rootIndicator = settingsDir.toPath().getRoot().toString().replaceAll("[\\\\:\\/]*", "");
+            // using "-" to separate the parts of the root project name to allow easier usage in the CLI, just in case.
+            return "generated-" + rootIndicator  + (rootIndicator.isEmpty() ? "" : "-") +
+                sha512().hashString(now().toString()).toString().substring(0, 6);
+        }
+        return settingsDir.getName();
     }
 
     @Override
@@ -305,6 +321,10 @@ public abstract class DefaultSettings extends AbstractPluginAware implements Set
     public abstract PluginManagerInternal getPluginManager();
 
     @Override
+    @Inject
+    public abstract BuildLayout getLayout();
+
+    @Override
     public void includeBuild(Object rootProject) {
         includeBuild(rootProject, Actions.doNothing());
     }
@@ -391,5 +411,14 @@ public abstract class DefaultSettings extends AbstractPluginAware implements Set
     @Override
     public void caches(Action<? super CacheConfigurations> cachesConfiguration) {
         cachesConfiguration.execute(getCaches());
+    }
+
+    @Override
+    @Inject
+    public abstract SharedModelDefaults getDefaults();
+
+    @Override
+    public void defaults(Action<? super SharedModelDefaults> action) {
+        action.execute(getDefaults());
     }
 }

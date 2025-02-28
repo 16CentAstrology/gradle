@@ -16,16 +16,18 @@
 package org.gradle.api.execution;
 
 import org.gradle.api.Task;
+import org.gradle.internal.DeprecatedInGradleScope;
 import org.gradle.internal.service.scopes.EventScope;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.service.scopes.Scope;
 
 /**
  * <p>A {@code TaskActionListener} is notified of the actions that a task performs.</p>
  *
  * @deprecated This type is not supported when configuration caching is enabled.
  */
-@EventScope(Scopes.Build.class)
+@EventScope(Scope.Build.class)
 @Deprecated
+@DeprecatedInGradleScope
 public interface TaskActionListener {
     /**
      * This method is called immediately before the task starts performing its actions.

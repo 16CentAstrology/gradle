@@ -18,16 +18,18 @@ package org.gradle.normalization
 
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
 import org.gradle.integtests.fixtures.AvailableJavaHomes
+import org.gradle.integtests.fixtures.StableConfigurationCacheDeprecations
 import org.gradle.integtests.fixtures.UnsupportedWithConfigurationCache
 import org.gradle.test.fixtures.file.TestFile
+import org.gradle.test.precondition.Requires
+import org.gradle.test.preconditions.IntegTestPreconditions
 import org.gradle.util.internal.TextUtil
-import spock.lang.IgnoreIf
 import spock.lang.Issue
 
 import java.util.jar.Attributes
 import java.util.jar.Manifest
 
-class ConfigureRuntimeClasspathNormalizationIntegrationTest extends AbstractIntegrationSpec {
+class ConfigureRuntimeClasspathNormalizationIntegrationTest extends AbstractIntegrationSpec implements StableConfigurationCacheDeprecations {
     def "can ignore files on runtime classpath in #tree (using runtime API: #api)"() {
         def project = new ProjectWithRuntimeClasspathNormalization(api).withFilesIgnored()
 
@@ -221,6 +223,7 @@ class ConfigureRuntimeClasspathNormalizationIntegrationTest extends AbstractInte
         """.stripIndent()
 
         when:
+        expectTaskGetProjectDeprecations()
         fails 'configureNormalization'
 
         then:
@@ -352,7 +355,7 @@ class ConfigureRuntimeClasspathNormalizationIntegrationTest extends AbstractInte
         executedAndNotSkipped(project.customTask)
     }
 
-    @IgnoreIf({ AvailableJavaHomes.differentJdk == null })
+    @Requires(IntegTestPreconditions.JavaHomeWithDifferentVersionAvailable)
     def "property ordering is consistent"() {
         def differentJdk = AvailableJavaHomes.differentJdk
         def project = new ProjectWithRuntimeClasspathNormalization(Api.RUNTIME)
@@ -375,7 +378,7 @@ class ConfigureRuntimeClasspathNormalizationIntegrationTest extends AbstractInte
 
         when:
         run "clean"
-        executer.withJavaHome(differentJdk.javaHome)
+        executer.withJvm(differentJdk)
         withBuildCache().succeeds project.customTask
         then:
         skipped(project.customTask)

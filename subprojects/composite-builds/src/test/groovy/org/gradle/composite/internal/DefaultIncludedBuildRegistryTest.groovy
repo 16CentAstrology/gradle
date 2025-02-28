@@ -16,6 +16,7 @@
 
 package org.gradle.composite.internal
 
+import org.gradle.api.artifacts.component.BuildIdentifier
 import org.gradle.api.initialization.ProjectDescriptor
 import org.gradle.api.internal.BuildDefinition
 import org.gradle.api.internal.DocumentationRegistry
@@ -24,7 +25,6 @@ import org.gradle.api.internal.SettingsInternal
 import org.gradle.api.internal.StartParameterInternal
 import org.gradle.api.internal.artifacts.DefaultBuildIdentifier
 import org.gradle.initialization.BuildCancellationToken
-import org.gradle.initialization.exception.ExceptionAnalyser
 import org.gradle.initialization.layout.BuildLayout
 import org.gradle.internal.Actions
 import org.gradle.internal.build.BuildAddedListener
@@ -40,7 +40,8 @@ import org.gradle.internal.buildtree.BuildModelParameters
 import org.gradle.internal.buildtree.BuildTreeLifecycleControllerFactory
 import org.gradle.internal.buildtree.BuildTreeState
 import org.gradle.internal.event.ListenerManager
-import org.gradle.internal.operations.BuildOperationExecutor
+import org.gradle.internal.exception.ExceptionAnalyser
+import org.gradle.internal.operations.BuildOperationRunner
 import org.gradle.internal.service.DefaultServiceRegistry
 import org.gradle.internal.service.ServiceRegistry
 import org.gradle.internal.service.scopes.GradleUserHomeScopeServiceRegistry
@@ -81,7 +82,7 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         services.add(Stub(WorkerLeaseService))
         services.add(Stub(BuildTreeWorkGraphController))
         services.add(Stub(ExceptionAnalyser))
-        services.add(Stub(BuildOperationExecutor))
+        services.add(Stub(BuildOperationRunner))
         services.add(Stub(BuildStateRegistry))
         services.add(Stub(BuildTreeLifecycleControllerFactory))
         services.add(Stub(BuildModelParameters))
@@ -124,17 +125,16 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         def dir = tmpDir.createDir("b1")
         def buildDefinition = build(dir)
         def includedBuild = Stub(IncludedBuildState)
-        def buildIdentifier = new DefaultBuildIdentifier("b1")
-        def idPath = Path.path(":b1")
+        def buildIdentifier = buildIdentifier(":b1")
         includedBuild.buildIdentifier >> buildIdentifier
         includedBuild.buildRootDir >> dir
 
         given:
         registry.attachRootBuild(rootBuild())
-        includedBuildFactory.createBuild(buildIdentifier, idPath, buildDefinition, false, _ as BuildState) >> includedBuild
+        includedBuildFactory.createBuild(buildIdentifier, buildDefinition, false, _ as BuildState) >> includedBuild
 
         when:
-        def result = registry.addIncludedBuild(buildDefinition)
+        def result = registry.addIncludedBuild(buildDefinition, Stub(BuildState))
         then:
         1 * buildAddedListener.buildAdded(includedBuild)
         0 * _
@@ -156,8 +156,8 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         given:
         registry.attachRootBuild(rootBuild())
 
-        registry.addIncludedBuild(buildDefinition1)
-        registry.addIncludedBuild(buildDefinition2)
+        registry.addIncludedBuild(buildDefinition1, Stub(BuildState))
+        registry.addIncludedBuild(buildDefinition2, Stub(BuildState))
 
         expect:
         registry.includedBuilds as List == [includedBuild1, includedBuild2]
@@ -170,7 +170,6 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         def buildDefinition1 = build(dir1, "b1")
         def buildDefinition2 = build(dir2, "b2")
         def buildDefinition3 = build(dir3, "b3")
-        def id1 = new DefaultBuildIdentifier("b1")
         def includedBuild1 = expectIncludedBuildAdded("b1", buildDefinition1)
         def includedBuild2 = expectIncludedBuildAdded("b2", buildDefinition2)
         def includedBuild3 = expectIncludedBuildAdded("b3", buildDefinition3)
@@ -179,13 +178,13 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         registry.attachRootBuild(rootBuild())
 
         expect:
-        registry.addIncludedBuild(buildDefinition1)
-        registry.addIncludedBuild(buildDefinition2)
-        registry.addIncludedBuild(buildDefinition3)
+        registry.addIncludedBuild(buildDefinition1, Stub(BuildState))
+        registry.addIncludedBuild(buildDefinition2, Stub(BuildState))
+        registry.addIncludedBuild(buildDefinition3, Stub(BuildState))
 
         registry.includedBuilds as List == [includedBuild1, includedBuild2, includedBuild3]
 
-        registry.getBuild(id1).is(includedBuild1)
+        registry.getBuild(buildIdentifier(":b1")).is(includedBuild1)
     }
 
     def "can add the same included build multiple times"() {
@@ -196,10 +195,10 @@ class DefaultIncludedBuildRegistryTest extends Specification {
 
         given:
         registry.attachRootBuild(rootBuild())
-        registry.addIncludedBuild(buildDefinition1)
+        registry.addIncludedBuild(buildDefinition1, Stub(BuildState))
 
         expect:
-        registry.addIncludedBuild(buildDefinition2) is includedBuild
+        registry.addIncludedBuild(buildDefinition2, Stub(BuildState)) is includedBuild
     }
 
     def "can add an implicit included build"() {
@@ -210,7 +209,7 @@ class DefaultIncludedBuildRegistryTest extends Specification {
 
         given:
         registry.attachRootBuild(rootBuild())
-        includedBuildFactory.createBuild(new DefaultBuildIdentifier("b1"), Path.path(":b1"), buildDefinition, true, _ as BuildState) >> includedBuild
+        includedBuildFactory.createBuild(buildIdentifier(":b1"), buildDefinition, true, _ as BuildState) >> includedBuild
 
         when:
         def result = registry.addImplicitIncludedBuild(buildDefinition)
@@ -243,7 +242,7 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         def nestedBuild = registry.getBuildSrcNestedBuild(rootBuild)
         nestedBuild != null
         nestedBuild.implicitBuild
-        nestedBuild.buildIdentifier == new DefaultBuildIdentifier("buildSrc")
+        nestedBuild.buildIdentifier == buildIdentifier(":buildSrc")
         nestedBuild.identityPath == Path.path(":buildSrc")
 
         and:
@@ -267,16 +266,16 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         def parentDefinition = build(parentDir, "parent")
         def parent = expectIncludedBuildAdded("parent", parentDefinition)
 
-        registry.addIncludedBuild(parentDefinition)
+        registry.addIncludedBuild(parentDefinition, Stub(BuildState))
 
         expect:
         def nestedBuild1 = registry.getBuildSrcNestedBuild(rootBuild)
-        nestedBuild1.buildIdentifier == new DefaultBuildIdentifier("buildSrc")
+        nestedBuild1.buildIdentifier == buildIdentifier(":buildSrc")
         nestedBuild1.identityPath == Path.path(":buildSrc")
 
         def nestedBuild2 = registry.getBuildSrcNestedBuild(parent)
         // Shows current behaviour, not necessarily desired behaviour
-        nestedBuild2.buildIdentifier == new DefaultBuildIdentifier("buildSrc:1")
+        nestedBuild2.buildIdentifier == buildIdentifier(":parent:buildSrc")
         nestedBuild2.identityPath == Path.path(":parent:buildSrc")
     }
 
@@ -298,7 +297,7 @@ class DefaultIncludedBuildRegistryTest extends Specification {
 
     IncludedBuildState expectIncludedBuildAdded(String name, BuildDefinition buildDefinition) {
         def idPath = Path.path(":$name")
-        def buildIdentifier = new DefaultBuildIdentifier(name)
+        def buildIdentifier = new DefaultBuildIdentifier(idPath)
 
         def gradle = Stub(GradleInternal)
         def services = Stub(ServiceRegistry)
@@ -313,7 +312,7 @@ class DefaultIncludedBuildRegistryTest extends Specification {
 
         services.get(PublicBuildPath) >> Stub(PublicBuildPath)
 
-        includedBuildFactory.createBuild(buildIdentifier, idPath, buildDefinition, false, _) >> includedBuild
+        includedBuildFactory.createBuild(buildIdentifier, buildDefinition, false, _) >> includedBuild
 
         return includedBuild
     }
@@ -364,4 +363,7 @@ class DefaultIncludedBuildRegistryTest extends Specification {
         return buildController
     }
 
+    private BuildIdentifier buildIdentifier(String path) {
+        new DefaultBuildIdentifier(Path.path(path))
+    }
 }

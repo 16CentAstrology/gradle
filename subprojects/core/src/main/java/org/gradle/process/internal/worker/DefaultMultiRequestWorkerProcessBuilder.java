@@ -16,9 +16,7 @@
 
 package org.gradle.process.internal.worker;
 
-import org.gradle.api.Action;
 import org.gradle.api.logging.LogLevel;
-import org.gradle.internal.Actions;
 import org.gradle.internal.Cast;
 import org.gradle.internal.classloader.ClasspathUtil;
 import org.gradle.internal.classpath.ClassPath;
@@ -36,24 +34,23 @@ import org.gradle.process.internal.worker.request.ResponseProtocol;
 import org.gradle.process.internal.worker.request.WorkerAction;
 
 import java.io.File;
-import java.net.URL;
 import java.util.Collections;
 import java.util.Set;
 
 class DefaultMultiRequestWorkerProcessBuilder<IN, OUT> implements MultiRequestWorkerProcessBuilder<IN, OUT> {
+
     private final Class<?> workerImplementation;
-    private final DefaultWorkerProcessBuilder workerProcessBuilder;
-    private Action<WorkerProcess> onFailure = Actions.doNothing();
-    private final RequestArgumentSerializers argumentSerializers = new RequestArgumentSerializers();
     private final OutputEventListener outputEventListener;
+
+    // Mutable state
+    private final DefaultWorkerProcessBuilder workerProcessBuilder;
+    private final RequestArgumentSerializers argumentSerializers = new RequestArgumentSerializers();
+    private boolean useApplicationClassloaderOnly;
 
     public DefaultMultiRequestWorkerProcessBuilder(Class<?> workerImplementation, DefaultWorkerProcessBuilder workerProcessBuilder, OutputEventListener outputEventListener) {
         this.workerImplementation = workerImplementation;
         this.workerProcessBuilder = workerProcessBuilder;
-        ClassPath implementationClasspath = ClasspathUtil.getClasspath(workerImplementation.getClassLoader());
         this.outputEventListener = outputEventListener;
-        workerProcessBuilder.worker(new WorkerAction(workerImplementation));
-        workerProcessBuilder.setImplementationClasspath(implementationClasspath.getAsURLs());
     }
 
     @Override
@@ -128,21 +125,24 @@ class DefaultMultiRequestWorkerProcessBuilder<IN, OUT> implements MultiRequestWo
     }
 
     @Override
-    public void onProcessFailure(Action<WorkerProcess> action) {
-        this.onFailure = action;
-    }
-
-    @Override
-    public void useApplicationClassloaderOnly() {
-        workerProcessBuilder.setImplementationClasspath(Collections.<URL>emptyList());
+    public void withoutAutomaticImplementationClasspath() {
+        this.useApplicationClassloaderOnly = true;
     }
 
     @Override
     public MultiRequestClient<IN, OUT> build() {
+        workerProcessBuilder.worker(new WorkerAction(this.workerImplementation));
+
+        if (useApplicationClassloaderOnly) {
+            workerProcessBuilder.setImplementationClasspath(Collections.emptyList());
+        } else {
+            ClassPath implementationClasspath = ClasspathUtil.getClasspath(this.workerImplementation.getClassLoader());
+            workerProcessBuilder.setImplementationClasspath(implementationClasspath.getAsURLs());
+        }
+
         // Always publish process info for multi-request workers
         workerProcessBuilder.enableJvmMemoryInfoPublishing(true);
         final WorkerProcess workerProcess = workerProcessBuilder.build();
-        final Action<WorkerProcess> failureHandler = onFailure;
 
         return new MultiRequestClient<IN, OUT>() {
             private Receiver receiver = new Receiver(getBaseName(), outputEventListener);
@@ -150,6 +150,7 @@ class DefaultMultiRequestWorkerProcessBuilder<IN, OUT> implements MultiRequestWo
 
             @Override
             public WorkerProcess start() {
+                // Note -- leaks current build operation to worker thread, it will be cleared after the worker is started
                 try {
                     workerProcess.start();
                 } catch (Exception e) {
@@ -177,6 +178,15 @@ class DefaultMultiRequestWorkerProcessBuilder<IN, OUT> implements MultiRequestWo
             }
 
             @Override
+            public void stopNow() {
+                try {
+                    workerProcess.stopNow();
+                } finally {
+                    requestProtocol = null;
+                }
+            }
+
+            @Override
             public OUT run(IN request) {
                 requestProtocol.run(new Request(request, CurrentBuildOperationRef.instance().get()));
                 boolean hasResult = receiver.awaitNextResult();
@@ -184,7 +194,6 @@ class DefaultMultiRequestWorkerProcessBuilder<IN, OUT> implements MultiRequestWo
                     try {
                         // Reached the end of input, worker has crashed or exited
                         requestProtocol = null;
-                        failureHandler.execute(workerProcess);
                         workerProcess.waitForStop();
                         // Worker didn't crash
                         throw new IllegalStateException(String.format("No response was received from %s but the worker process has finished.", getBaseName()));

@@ -5,13 +5,16 @@ plugins {
 description = "Provides plugins that configures the root Gradle project"
 
 dependencies {
-    implementation(project(":idea"))
-    implementation(project(":basics"))
-    implementation(project(":profiling"))
+    implementation("gradlebuild:basics")
 
-    implementation(project(":cleanup")) {
+    implementation(projects.idea)
+    implementation(projects.profiling)
+
+    implementation(projects.cleanup) {
         because("The CachesCleaner service is shared and needs to be on the root classpath")
     }
 
-    implementation("com.autonomousapps:dependency-analysis-gradle-plugin")
+    implementation("com.autonomousapps:dependency-analysis-gradle-plugin") {
+        exclude(group = "com.google.j2objc", module = "j2objc-annotations") // This has no use in Gradle
+    }
 }

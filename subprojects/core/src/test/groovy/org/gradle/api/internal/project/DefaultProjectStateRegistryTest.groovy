@@ -25,10 +25,10 @@ import org.gradle.api.internal.initialization.ClassLoaderScope
 import org.gradle.initialization.DefaultProjectDescriptor
 import org.gradle.initialization.DefaultProjectDescriptorRegistry
 import org.gradle.internal.build.BuildState
-import org.gradle.internal.concurrent.DefaultParallelismConfiguration
 import org.gradle.internal.resources.DefaultResourceLockCoordinationService
 import org.gradle.internal.service.DefaultServiceRegistry
 import org.gradle.internal.work.DefaultWorkerLeaseService
+import org.gradle.internal.work.DefaultWorkerLimits
 import org.gradle.test.fixtures.concurrent.ConcurrentSpec
 import org.gradle.util.Path
 import org.gradle.util.TestUtil
@@ -36,9 +36,13 @@ import org.gradle.util.TestUtil
 import static org.junit.Assert.assertTrue
 
 class DefaultProjectStateRegistryTest extends ConcurrentSpec {
-    def workerLeaseService = new DefaultWorkerLeaseService(new DefaultResourceLockCoordinationService(), new DefaultParallelismConfiguration(true, 4))
+    def workerLeaseService = new DefaultWorkerLeaseService(new DefaultResourceLockCoordinationService(), new DefaultWorkerLimits(4))
     def registry = new DefaultProjectStateRegistry(workerLeaseService)
     def projectFactory = Mock(IProjectFactory)
+
+    def setup() {
+        workerLeaseService.startProjectExecution(true)
+    }
 
     def "adds projects for a build"() {
         given:
@@ -53,6 +57,7 @@ class DefaultProjectStateRegistryTest extends ConcurrentSpec {
         root.identityPath == Path.ROOT
         root.projectPath == Path.ROOT
         root.componentIdentifier.projectPath == ":"
+        root.componentIdentifier.buildTreePath == ":"
         root.parent == null
 
         def p1 = registry.stateFor(projectId("p1"))
@@ -62,6 +67,7 @@ class DefaultProjectStateRegistryTest extends ConcurrentSpec {
         p1.projectPath == Path.path(":p1")
         p1.parent.is(root)
         p1.componentIdentifier.projectPath == ":p1"
+        p1.componentIdentifier.buildTreePath == ":p1"
         p1.childProjects.empty
 
         def p2 = registry.stateFor(projectId("p2"))
@@ -71,6 +77,7 @@ class DefaultProjectStateRegistryTest extends ConcurrentSpec {
         p2.projectPath == Path.path(":p2")
         p2.parent.is(root)
         p2.componentIdentifier.projectPath == ":p2"
+        p2.componentIdentifier.buildTreePath == ":p2"
         p2.childProjects.empty
 
         root.childProjects.toList() == [p1, p2]

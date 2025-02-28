@@ -24,7 +24,7 @@ import org.gradle.internal.build.ExecutionResult;
 import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 public interface TaskExecutionGraphInternal extends TaskExecutionGraph {
 
@@ -41,7 +41,7 @@ public interface TaskExecutionGraphInternal extends TaskExecutionGraph {
     void populate(FinalizedExecutionPlan plan);
 
     /**
-     * Executes the given work. Discards the contents of this graph when completed. Should call {@link #populate)} prior to
+     * Executes the given work. Discards the contents of this graph when completed. Should call {@link #populate(FinalizedExecutionPlan)} prior to
      * calling this method.
      */
     ExecutionResult<Void> execute(FinalizedExecutionPlan plan);
@@ -60,7 +60,7 @@ public interface TaskExecutionGraphInternal extends TaskExecutionGraph {
      * Returns all the work items in this graph scheduled for execution plus all
      * dependencies from other builds.
      */
-    void visitScheduledNodes(Consumer<List<Node>> visitor);
+    void visitScheduledNodes(BiConsumer<List<Node>, Set<Node>> visitor);
 
     /**
      * Resets the lifecycle for this graph.

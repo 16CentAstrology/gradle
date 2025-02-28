@@ -5,9 +5,10 @@ plugins {
 description = "Provides plugins to configure conventions used by Kotlin, Java and Groovy projects to build Gradle"
 
 dependencies {
-    implementation(project(":basics"))
-    implementation(project(":dependency-modules"))
-    implementation(project(":module-identity"))
+    implementation("gradlebuild:basics")
+    implementation("gradlebuild:module-identity")
+
+    implementation(projects.dependencyModules)
 
     implementation("org.eclipse.jgit:org.eclipse.jgit")
     implementation("org.jsoup:jsoup")
@@ -15,7 +16,8 @@ dependencies {
     implementation("org.ow2.asm:asm")
     implementation("org.ow2.asm:asm-commons")
     implementation("com.google.code.gson:gson")
-    implementation("com.gradle:gradle-enterprise-gradle-plugin")
+    implementation("com.gradle:develocity-gradle-plugin")
+    implementation(kotlin("gradle-plugin"))
 
     implementation("com.thoughtworks.qdox:qdox") {
         because("ParameterNamesIndex")

@@ -17,7 +17,7 @@
 package org.gradle.initialization;
 
 import org.gradle.api.internal.properties.GradleProperties;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
 
 import java.io.File;
@@ -26,7 +26,7 @@ import java.io.File;
  * Controls the state (not loaded / loaded) of the attached {@link GradleProperties} instance
  * so that the set of Gradle properties is deterministically loaded only once per build.
  */
-@ServiceScope(Scopes.Build.class)
+@ServiceScope(Scope.Build.class)
 public interface GradlePropertiesController {
 
     /**
@@ -35,19 +35,22 @@ public interface GradlePropertiesController {
     GradleProperties getGradleProperties();
 
     /**
-     * Loads the immutable set of {@link GradleProperties} from the given directory and
+     * Loads the set of {@link GradleProperties} from the given directory and
      * makes it available to the build.
+     *
+     * Optionally sets a system properties after load.
      *
      * This method should be called only once per build but multiple calls with the
      * same argument are allowed.
      *
      * @param settingsDir directory where to look for the {@code gradle.properties} file
+     * @param setSystemProperties should system properties be set or not
      * @throws IllegalStateException if called with a different argument in the same build
      */
-    void loadGradlePropertiesFrom(File settingsDir);
+    void loadGradlePropertiesFrom(File settingsDir, boolean setSystemProperties);
 
     /**
-     * Unloads the properties so the next call to {@link #loadGradlePropertiesFrom(File)} would reload them and
+     * Unloads the properties so the next call to {@link #loadGradlePropertiesFrom(File, boolean)} would reload them and
      * re-evaluate any property defining system properties and environment variables.
      */
     void unloadGradleProperties();

@@ -19,10 +19,9 @@ import com.google.common.collect.ImmutableSortedMap
 import com.google.common.collect.ImmutableSortedSet
 import org.gradle.api.execution.TaskActionListener
 import org.gradle.api.file.FileCollection
-import org.gradle.api.internal.DocumentationRegistry
 import org.gradle.api.internal.TaskInternal
-import org.gradle.api.internal.TaskOutputsInternal
-import org.gradle.api.internal.changedetection.TaskExecutionMode
+import org.gradle.api.internal.TaskOutputsEnterpriseInternal
+import org.gradle.api.internal.changedetection.changes.DefaultTaskExecutionMode
 import org.gradle.api.internal.file.TestFiles
 import org.gradle.api.internal.project.ProjectInternal
 import org.gradle.api.internal.tasks.InputChangesAwareTaskAction
@@ -30,43 +29,26 @@ import org.gradle.api.internal.tasks.TaskExecutionContext
 import org.gradle.api.internal.tasks.TaskExecutionOutcome
 import org.gradle.api.internal.tasks.TaskStateInternal
 import org.gradle.api.internal.tasks.properties.TaskProperties
+import org.gradle.api.problems.internal.ProblemsProgressEventEmitterHolder
 import org.gradle.api.tasks.StopActionException
 import org.gradle.api.tasks.StopExecutionException
 import org.gradle.api.tasks.TaskExecutionException
 import org.gradle.caching.internal.controller.BuildCacheController
 import org.gradle.groovy.scripts.ScriptSource
-import org.gradle.initialization.DefaultBuildCancellationToken
 import org.gradle.internal.event.ListenerManager
 import org.gradle.internal.exceptions.DefaultMultiCauseException
 import org.gradle.internal.exceptions.MultiCauseException
-import org.gradle.internal.execution.BuildOutputCleanupRegistry
 import org.gradle.internal.execution.FileCollectionFingerprinterRegistry
 import org.gradle.internal.execution.OutputChangeListener
-import org.gradle.internal.execution.WorkInputListeners
+import org.gradle.internal.execution.TestExecutionEngineFactory
 import org.gradle.internal.execution.WorkValidationContext
 import org.gradle.internal.execution.history.ExecutionHistoryStore
-import org.gradle.internal.execution.history.OutputsCleaner
 import org.gradle.internal.execution.history.OverlappingOutputDetector
 import org.gradle.internal.execution.history.PreviousExecutionState
 import org.gradle.internal.execution.history.changes.DefaultExecutionStateChangeDetector
-import org.gradle.internal.execution.impl.DefaultExecutionEngine
 import org.gradle.internal.execution.impl.DefaultInputFingerprinter
 import org.gradle.internal.execution.impl.DefaultOutputSnapshotter
 import org.gradle.internal.execution.impl.DefaultWorkValidationContext
-import org.gradle.internal.execution.steps.AssignWorkspaceStep
-import org.gradle.internal.execution.steps.CancelExecutionStep
-import org.gradle.internal.execution.steps.CaptureStateAfterExecutionStep
-import org.gradle.internal.execution.steps.CaptureStateBeforeExecutionStep
-import org.gradle.internal.execution.steps.ExecuteStep
-import org.gradle.internal.execution.steps.IdentifyStep
-import org.gradle.internal.execution.steps.IdentityCacheStep
-import org.gradle.internal.execution.steps.LoadPreviousExecutionStateStep
-import org.gradle.internal.execution.steps.RemovePreviousOutputsStep
-import org.gradle.internal.execution.steps.ResolveCachingStateStep
-import org.gradle.internal.execution.steps.ResolveChangesStep
-import org.gradle.internal.execution.steps.ResolveInputChangesStep
-import org.gradle.internal.execution.steps.SkipEmptyWorkStep
-import org.gradle.internal.execution.steps.SkipUpToDateStep
 import org.gradle.internal.execution.steps.ValidateStep
 import org.gradle.internal.file.PathToFileResolver
 import org.gradle.internal.file.ReservedFileSystemLocationRegistry
@@ -80,16 +62,15 @@ import org.gradle.internal.hash.TestHashCodes
 import org.gradle.internal.id.UniqueId
 import org.gradle.internal.logging.StandardOutputCapture
 import org.gradle.internal.operations.BuildOperationContext
-import org.gradle.internal.operations.BuildOperationExecutor
+import org.gradle.internal.operations.BuildOperationRunner
 import org.gradle.internal.operations.RunnableBuildOperation
-import org.gradle.internal.operations.TestBuildOperationExecutor
+import org.gradle.internal.operations.TestBuildOperationRunner
 import org.gradle.internal.snapshot.impl.ClassImplementationSnapshot
 import org.gradle.internal.snapshot.impl.DefaultValueSnapshotter
 import org.gradle.internal.snapshot.impl.ImplementationSnapshot
 import org.gradle.internal.work.AsyncWorkTracker
+import org.gradle.util.TestUtil
 import spock.lang.Specification
-
-import java.util.function.Supplier
 
 import static java.util.Collections.emptyList
 import static org.gradle.api.internal.file.TestFiles.deleter
@@ -101,9 +82,8 @@ import static org.gradle.internal.work.AsyncWorkTracker.ProjectLockRetention.REL
 import static org.gradle.internal.work.AsyncWorkTracker.ProjectLockRetention.RELEASE_PROJECT_LOCKS
 
 class ExecuteActionsTaskExecuterTest extends Specification {
-    private final DocumentationRegistry documentationRegistry = new DocumentationRegistry()
     def task = Mock(TaskInternal)
-    def taskOutputs = Mock(TaskOutputsInternal)
+    def taskOutputs = Mock(TaskOutputsEnterpriseInternal)
     def action1 = Mock(InputChangesAwareTaskAction) {
         getActionImplementation(_ as ClassLoaderHierarchyHasher) >> ImplementationSnapshot.of("Action1", TestHashCodes.hashCodeFrom(1234))
     }
@@ -122,12 +102,12 @@ class ExecuteActionsTaskExecuterTest extends Specification {
 
         getOutputFilesProducedByWork() >> ImmutableSortedMap.of()
     }
-    def validationContext = new DefaultWorkValidationContext(documentationRegistry, WorkValidationContext.TypeOriginInspector.NO_OP)
+    def validationContext = new DefaultWorkValidationContext(WorkValidationContext.TypeOriginInspector.NO_OP)
     def executionContext = Mock(TaskExecutionContext)
     def scriptSource = Mock(ScriptSource)
     def standardOutputCapture = Mock(StandardOutputCapture)
-    def buildOperationExecutorForTaskExecution = Mock(BuildOperationExecutor)
-    def buildOperationExecutor = new TestBuildOperationExecutor()
+    def buildOperationRunnerForTaskExecution = Mock(BuildOperationRunner)
+    def buildOperationRunner = new TestBuildOperationRunner()
     def asyncWorkTracker = Mock(AsyncWorkTracker)
 
     def virtualFileSystem = virtualFileSystem()
@@ -143,10 +123,10 @@ class ExecuteActionsTaskExecuterTest extends Specification {
 
     def actionListener = Stub(TaskActionListener)
     def outputChangeListener = Stub(OutputChangeListener)
-    def inputListeners = Stub(WorkInputListeners)
-    def cancellationToken = new DefaultBuildCancellationToken()
     def changeDetector = new DefaultExecutionStateChangeDetector()
-    def taskCacheabilityResolver = Mock(TaskCacheabilityResolver)
+    def taskCacheabilityResolver = Stub(TaskCacheabilityResolver) {
+        shouldDisableCaching(_) >> Optional.empty()
+    }
     def buildCacheController = Stub(BuildCacheController)
     def listenerManager = Stub(ListenerManager)
     def classloaderHierarchyHasher = new ClassLoaderHierarchyHasher() {
@@ -162,34 +142,25 @@ class ExecuteActionsTaskExecuterTest extends Specification {
     def fileCollectionFactory = fileCollectionFactory()
     def deleter = deleter()
     def validationWarningReporter = Stub(ValidateStep.ValidationWarningRecorder)
-    def buildOutputCleanupRegistry = Stub(BuildOutputCleanupRegistry)
-    def outputsCleanerFactory = { new OutputsCleaner(deleter, buildOutputCleanupRegistry.&isOutputOwnedByBuild, buildOutputCleanupRegistry.&isOutputOwnedByBuild) } as Supplier<OutputsCleaner>
 
-    // @formatter:off
-    def executionEngine = new DefaultExecutionEngine(documentationRegistry,
-        new IdentifyStep<>(buildOperationExecutor,
-        new IdentityCacheStep<>(
-        new AssignWorkspaceStep<>(
-        new LoadPreviousExecutionStateStep<>(
-        new SkipEmptyWorkStep(outputChangeListener, inputListeners, outputsCleanerFactory,
-        new CaptureStateBeforeExecutionStep<>(buildOperationExecutor, classloaderHierarchyHasher, outputSnapshotter, overlappingOutputDetector,
-        new ValidateStep<>(virtualFileSystem, validationWarningReporter,
-        new ResolveCachingStateStep<>(buildCacheController, false,
-        new ResolveChangesStep<>(changeDetector,
-        new SkipUpToDateStep<>(
-        new ResolveInputChangesStep<>(
-        new CaptureStateAfterExecutionStep<>(buildOperationExecutor, buildId, outputSnapshotter, outputChangeListener,
-        new CancelExecutionStep<>(cancellationToken,
-        new RemovePreviousOutputsStep<>(deleter, outputChangeListener,
-        new ExecuteStep<>(buildOperationExecutor
-    ))))))))))))))))
-    // @formatter:on
+    // TODO Make this test work with a mock execution engine
+    def executionEngine = TestExecutionEngineFactory.createExecutionEngine(
+        buildId,
+        buildCacheController,
+        buildOperationRunner,
+        classloaderHierarchyHasher,
+        deleter,
+        changeDetector,
+        outputChangeListener,
+        outputSnapshotter,
+        overlappingOutputDetector,
+        validationWarningReporter,
+        virtualFileSystem
+    )
 
     def executer = new ExecuteActionsTaskExecuter(
-        ExecuteActionsTaskExecuter.BuildCacheState.DISABLED,
-        ExecuteActionsTaskExecuter.ScanPluginState.NOT_APPLIED,
         executionHistoryStore,
-        buildOperationExecutorForTaskExecution,
+        buildOperationRunnerForTaskExecution,
         asyncWorkTracker,
         actionListener,
         taskCacheabilityResolver,
@@ -212,12 +183,13 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         taskOutputs.setPreviousOutputFiles(_ as FileCollection)
         project.getBuildScriptSource() >> scriptSource
         task.getStandardOutputCapture() >> standardOutputCapture
-        executionContext.getTaskExecutionMode() >> TaskExecutionMode.INCREMENTAL
+        executionContext.getTaskExecutionMode() >> DefaultTaskExecutionMode.incremental()
         executionContext.getTaskProperties() >> taskProperties
         executionContext.getValidationContext() >> validationContext
         executionContext.getValidationAction() >> { { c -> } as TaskExecutionContext.ValidationAction }
         executionHistoryStore.load("task") >> Optional.of(previousState)
         taskProperties.getOutputFileProperties() >> ImmutableSortedSet.of()
+        ProblemsProgressEventEmitterHolder.init(TestUtil.problemsService())
     }
 
     void noMoreInteractions() {
@@ -257,7 +229,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.execute(task) >> {
             assert state.executing
@@ -271,7 +243,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action2.execute(task)
         then:
@@ -305,7 +277,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         1 * standardOutputCapture.start()
 
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.execute(task) >> {
             task.getActions().add(action2)
@@ -335,7 +307,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.clearInputChanges()
         then:
@@ -374,7 +346,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * asyncWorkTracker.waitForCompletion(_, RELEASE_AND_REACQUIRE_PROJECT_LOCKS)
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * standardOutputCapture.stop()
         state.didWork
@@ -395,7 +367,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.execute(task) >> {
             throw new StopActionException('stop')
@@ -409,7 +381,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action2.execute(task)
         then:
@@ -439,7 +411,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.clearInputChanges()
         then:
@@ -477,7 +449,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.clearInputChanges()
         then:
@@ -514,7 +486,7 @@ class ExecuteActionsTaskExecuterTest extends Specification {
         then:
         1 * standardOutputCapture.start()
         then:
-        1 * buildOperationExecutorForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
+        1 * buildOperationRunnerForTaskExecution.run(_ as RunnableBuildOperation) >> { args -> args[0].run(Stub(BuildOperationContext)) }
         then:
         1 * action1.clearInputChanges()
         then:

@@ -16,9 +16,13 @@
 
 package org.gradle.api.internal.artifacts.dependencies;
 
-import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ProjectDependency;
+import org.gradle.api.internal.project.ProjectIdentity;
 
 public interface ProjectDependencyInternal extends ProjectDependency {
-    Configuration findProjectConfiguration();
+
+    /**
+     * Get the identity of the target project.
+     */
+    ProjectIdentity getTargetProjectIdentity();
 }

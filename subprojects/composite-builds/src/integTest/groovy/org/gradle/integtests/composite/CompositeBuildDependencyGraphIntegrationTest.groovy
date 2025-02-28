@@ -21,6 +21,12 @@ import org.gradle.integtests.fixtures.ToBeFixedForConfigurationCache
 import org.gradle.integtests.fixtures.build.BuildTestFile
 import org.gradle.integtests.fixtures.resolve.ResolveTestFixture
 
+import static org.gradle.integtests.fixtures.SuggestionsMessages.GET_HELP
+import static org.gradle.integtests.fixtures.SuggestionsMessages.INFO_DEBUG
+import static org.gradle.integtests.fixtures.SuggestionsMessages.SCAN
+import static org.gradle.integtests.fixtures.SuggestionsMessages.STACKTRACE_MESSAGE
+import static org.gradle.integtests.fixtures.SuggestionsMessages.repositoryHint
+
 /**
  * Tests for resolving dependency graph with substitution within a composite build.
  */
@@ -38,10 +44,10 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
             buildFile << """
                 allprojects {
                     apply plugin: 'java-library'
-                    version "2.0"
+                    version = "2.0"
 
                     repositories {
-                        maven { url "${mavenRepo.uri}" }
+                        maven { url = "${mavenRepo.uri}" }
                     }
                 }
             """
@@ -259,6 +265,7 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
                 implementation "org.test:buildB:1.0"
             }
         """
+        createDirs("buildB", "buildB/b1", "buildB/b1/b11")
         buildB.settingsFile << """
             include ':b1:b11'
         """
@@ -395,6 +402,7 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
         checkGraph {
             module("org.external:external-dep:1.0") {
                 edge("org.test:buildB:1.0", ":buildB", "org.test:buildB:2.0") {
+                    forced()
                     compositeSubstitute()
                 }
             }
@@ -431,9 +439,11 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
         checkGraph {
             module("org.external:external-dep:1.0") {
                 edge("org.test:something:1.0", ":buildB", "org.test:buildB:2.0") {
+                    selectedByRule()
                     compositeSubstitute()
                 }
                 edge("org.other:something-else:1.0", ":buildB:b1", "org.test:b1:2.0") {
+                    selectedByRule()
                     compositeSubstitute()
                 }
             }
@@ -573,6 +583,7 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
         given:
         buildB
         def buildC = multiProjectBuild("buildC", ['c1', 'c2']);
+        createDirs("buildC", "buildC/nested", "buildC/nested/c1")
         buildC.settingsFile << """
             include ':nested:c1'
         """
@@ -685,11 +696,12 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
         when:
         checkDependenciesFails()
 
-        then:
-        failure.assertHasCause("No matching configuration of project :buildC was found. The consumer was configured to find a library for use during runtime, compatible with Java ${JavaVersion.current().majorVersion}, packaged as a jar, preferably optimized for standard JVMs, and its dependencies declared externally but:\n" +
-            "  - None of the consumable configurations have attributes.")
+        then: "Build C does not have any configurations defined, and thus no variants exist"
+        failure.assertHasCause("""No matching variant of project :buildC was found. The consumer was configured to find a library for use during runtime, compatible with Java ${JavaVersion.current().majorVersion}, packaged as a jar, preferably optimized for standard JVMs, and its dependencies declared externally but:
+  - No variants exist.""")
     }
 
+    public static final REPOSITORY_HINT = repositoryHint("Maven POM")
     @ToBeFixedForConfigurationCache(because = "different error reporting")
     def "includes build identifier in error message on failure to resolve dependencies of included build"() {
         def m = mavenRepo.module("org.test", "test", "1.2")
@@ -705,7 +717,7 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
         """
         buildC.buildFile << """
             repositories {
-                maven { url '$mavenRepo.uri' }
+                maven { url = '$mavenRepo.uri' }
             }
 
             configurations {
@@ -735,13 +747,18 @@ class CompositeBuildDependencyGraphIntegrationTest extends AbstractCompositeBuil
 
         then:
         failure.assertHasDescription("Could not determine the dependencies of task ':buildC:buildOutputs'.")
-        failure.assertHasCause("Could not resolve all task dependencies for configuration ':buildC:buildInputs'.")
+        failure.assertHasCause("Could not resolve all dependencies for configuration ':buildC:buildInputs'.")
         failure.assertHasCause("""Could not find org.test:test:1.2.
 Searched in the following locations:
-  - ${m.pom.file.toURL()}
-If the artifact you are trying to retrieve can be found in the repository but without metadata in 'Maven POM' format, you need to adjust the 'metadataSources { ... }' of the repository declaration.
+  - ${m.pom.file.displayUri}
 Required by:
     project :buildC""")
+        failure.assertHasResolutions(REPOSITORY_HINT,
+            STACKTRACE_MESSAGE,
+            INFO_DEBUG,
+            SCAN,
+            GET_HELP)
+
 
         when:
         m.publish()
@@ -772,6 +789,7 @@ Required by:
             }
         """
         includedBuilds = [empty]
+        createDirs("buildA", "buildA/subproject1")
         buildA.settingsFile << """
             include('subproject1')
             $includeRootStatement

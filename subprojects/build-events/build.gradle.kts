@@ -5,31 +5,37 @@ plugins {
 description = "Implementation of build event services and build event types (work item, tasks, tests, configuration, etc)"
 
 dependencies {
-    implementation(project(":base-services"))
-    implementation(project(":messaging"))
-    implementation(project(":core-api"))
-    implementation(project(":core"))
-    implementation(project(":model-core"))
-    implementation(project(":tooling-api"))
+    api(projects.buildOperations)
+    api(projects.concurrent)
+    api(projects.core)
+    api(projects.coreApi)
+    api(projects.messaging)
+    api(projects.problemsApi)
+    api(projects.serialization)
+    api(projects.serviceProvider)
+    api(projects.stdlibJavaExtensions)
+    api(projects.toolingApi)
 
-    implementation(libs.jsr305)
+    implementation(projects.modelCore)
+
+    api(libs.jsr305)
+
+    implementation(libs.errorProneAnnotations)
     implementation(libs.guava)
 
-    testImplementation(project(":internal-testing"))
-    testImplementation(project(":model-core"))
+    testImplementation(projects.internalTesting)
+    testImplementation(projects.modelCore)
 
-    integTestImplementation(project(":logging")) {
+    integTestImplementation(projects.logging) {
         because("This isn't declared as part of integtesting's API, but should be as logging's classes are in fact visible on the API")
     }
-    integTestImplementation(project(":build-option"))
-    integTestImplementation(project(":enterprise-operations"))
+    integTestImplementation(projects.buildOption)
+    integTestImplementation(projects.enterpriseOperations)
 
-    integTestDistributionRuntimeOnly(project(":distributions-basics"))  {
+    integTestDistributionRuntimeOnly(projects.distributionsBasics)  {
         because("Requires ':toolingApiBuilders': Event handlers are in the wrong place, and should live in this project")
     }
 }
-
-// Remove as part of fixing https://github.com/gradle/configuration-cache/issues/585
-tasks.configCacheIntegTest {
-    systemProperties["org.gradle.configuration-cache.internal.test-disable-load-after-store"] = "true"
+tasks.isolatedProjectsIntegTest {
+    enabled = false
 }

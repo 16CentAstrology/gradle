@@ -26,6 +26,7 @@ class CustomToolingModelIntegrationTest extends AbstractIntegrationSpec implemen
     // This is not an intended usage, but the Android plugin currently does this
     @UnsupportedWithConfigurationCache(because = "Tooling model builders require access to the project state, and this is not available when loading from cache")
     def "task that use a custom tooling model can run concurrently"() {
+        createDirs("a", "b", "c")
         settingsFile << """
             include 'a', 'b', 'c'
         """
@@ -89,6 +90,10 @@ class CustomToolingModelIntegrationTest extends AbstractIntegrationSpec implemen
         """
 
         when:
+        executer.expectDocumentedDeprecationWarning("Invocation of Task.project at execution time has been deprecated. "+
+            "This will fail with an error in Gradle 10.0. " +
+            "This API is incompatible with the configuration cache, which will become the only mode supported by Gradle in a future release. " +
+            "Consult the upgrading guide for further information: https://docs.gradle.org/current/userguide/upgrading_version_7.html#task_project")
         run("model1", "model2", "--parallel")
 
         then:

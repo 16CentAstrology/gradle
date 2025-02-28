@@ -17,7 +17,6 @@ package org.gradle.api.internal;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Maps;
 import groovy.lang.Closure;
 import org.gradle.api.Action;
 import org.gradle.api.InvalidUserDataException;
@@ -40,8 +39,10 @@ import org.gradle.api.provider.Provider;
 import org.gradle.api.reflect.TypeOf;
 import org.gradle.api.specs.Spec;
 import org.gradle.api.specs.Specs;
+import org.gradle.internal.Actions;
 import org.gradle.internal.Cast;
 import org.gradle.internal.ImmutableActionSet;
+import org.gradle.internal.evaluation.EvaluationScopeContext;
 import org.gradle.internal.metaobject.AbstractDynamicObject;
 import org.gradle.internal.metaobject.DynamicInvokeResult;
 import org.gradle.internal.metaobject.DynamicObject;
@@ -58,6 +59,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -102,8 +104,18 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
     }
 
     // should be protected, but use of the class generator forces it to be public
-    public DefaultNamedDomainObjectCollection(DefaultNamedDomainObjectCollection<? super T> collection, CollectionFilter<T> filter, Instantiator instantiator, Namer<? super T> namer) {
-        this(filter.getType(), collection.filteredStore(filter), collection.filteredEvents(filter), collection.filteredIndex(filter), instantiator, namer);
+    public DefaultNamedDomainObjectCollection(DefaultNamedDomainObjectCollection<? super T> collection, CollectionFilter<T> elementFilter, Instantiator instantiator, Namer<? super T> namer) {
+        this(collection, Specs.satisfyAll(), elementFilter, instantiator, namer);
+    }
+
+    protected DefaultNamedDomainObjectCollection(
+        DefaultNamedDomainObjectCollection<? super T> collection,
+        Spec<String> nameFilter,
+        CollectionFilter<T> elementFilter,
+        Instantiator instantiator,
+        Namer<? super T> namer
+    ) {
+        this(elementFilter.getType(), collection.filteredStore(elementFilter), collection.filteredEvents(elementFilter), collection.filteredIndex(nameFilter, elementFilter), instantiator, namer);
     }
 
     @Override
@@ -129,7 +141,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
     @Override
     public boolean addAll(Collection<? extends T> c) {
-        assertMutable("addAll(Collection<T>)");
+        assertCanMutate("addAll(Collection)");
         boolean changed = super.addAll(c);
         if (changed) {
             for (T t : c) {
@@ -142,8 +154,13 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
     @Override
     public void addLater(final Provider<? extends T> provider) {
-        assertMutable("addLater(Provider)");
-        super.addLater(provider);
+        assertCanMutate("addLater(Provider)");
+        doAddLater(provider);
+    }
+
+    @Override
+    protected void doAddLater(Provider<? extends T> provider) {
+        super.doAddLater(provider);
         if (provider instanceof Named) {
             final Named named = (Named) provider;
             index.putPending(named.getName(), Providers.internal(provider));
@@ -206,19 +223,19 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
     }
 
     /**
-     * Asserts that an item with the given name can be added to this collection.
+     * Asserts that an item with the given name is not present in this collection.
      */
-    protected void assertCanAdd(String name) {
+    protected void assertElementNotPresent(String name) {
         if (hasWithName(name)) {
             throw new InvalidUserDataException(String.format("Cannot add a %s with name '%s' as a %s with that name already exists.", getTypeDisplayName(), name, getTypeDisplayName()));
         }
     }
 
     /**
-     * Asserts that the given item can be added to this collection.
+     * Asserts that this collection does not contain an item with the same name as the given item.
      */
-    protected void assertCanAdd(T t) {
-        assertCanAdd(getNamer().determineName(t));
+    protected void assertElementNotPresent(T t) {
+        assertElementNotPresent(getNamer().determineName(t));
     }
 
     @Override
@@ -230,8 +247,8 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         return instantiator;
     }
 
-    protected <S extends T> Index<S> filteredIndex(CollectionFilter<S> filter) {
-        return index.filter(filter);
+    private <S extends T> Index<S> filteredIndex(Spec<String> nameFilter, CollectionFilter<S> elementFilter) {
+        return index.filter(nameFilter, elementFilter);
     }
 
     /**
@@ -242,13 +259,16 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         return Cast.uncheckedNonnullCast(instantiator.newInstance(DefaultNamedDomainObjectCollection.class, this, filter, instantiator, namer));
     }
 
-    public String getDisplayName() {
-        return getTypeDisplayName() + " container";
+    /**
+     * Creates a filtered version of this collection.
+     */
+    protected <S extends T> DefaultNamedDomainObjectCollection<S> filtered(Spec<String> nameFilter, CollectionFilter<S> elementFilter) {
+        return Cast.uncheckedNonnullCast(instantiator.newInstance(DefaultNamedDomainObjectCollection.class, this, nameFilter, elementFilter, instantiator, namer));
     }
 
     @Override
-    public String toString() {
-        return getDisplayName();
+    public String getDisplayName() {
+        return getTypeDisplayName() + " container";
     }
 
     @Override
@@ -271,6 +291,12 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
     @Override
     public <S extends T> NamedDomainObjectCollection<S> withType(Class<S> type) {
         return filtered(createFilter(type));
+    }
+
+    @Override
+    public NamedDomainObjectCollection<T> named(Spec<String> nameFilter) {
+        Spec<T> spec = convertNameToElementFilter(nameFilter);
+        return filtered(nameFilter, createFilter(spec));
     }
 
     @Override
@@ -342,7 +368,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
     @Override
     public T getByName(String name, Action<? super T> configureAction) throws UnknownDomainObjectException {
-        assertMutable("getByName(String, Action)");
+        assertEagerContext("getByName(String, Action)");
         T t = getByName(name);
         configureAction.execute(t);
         return t;
@@ -364,7 +390,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
     @Override
     public NamedDomainObjectProvider<T> named(String name, Action<? super T> configurationAction) throws UnknownDomainObjectException {
-        assertMutable("named(String, Action)");
+        assertEagerContext("named(String, Action)");
         NamedDomainObjectProvider<T> provider = named(name);
         provider.configure(configurationAction);
         return provider;
@@ -386,7 +412,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
     @Override
     public <S extends T> NamedDomainObjectProvider<S> named(String name, Class<S> type, Action<? super S> configurationAction) throws UnknownDomainObjectException {
-        assertMutable("named(String, Class, Action)");
+        assertEagerContext("named(String, Class, Action)");
         NamedDomainObjectProvider<S> provider = named(name, type);
         provider.configure(configurationAction);
         return provider;
@@ -505,8 +531,8 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
             name));
     }
 
-    protected String getTypeDisplayName() {
-        return getType().getSimpleName();
+    protected Spec<T> convertNameToElementFilter(Spec<String> nameFilter) {
+        return (T t) -> nameFilter.isSatisfiedBy(namer.determineName(t));
     }
 
     private class ContainerElementsDynamicObject extends AbstractDynamicObject {
@@ -532,20 +558,20 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         }
 
         @Override
-        public boolean hasMethod(String name, Object... arguments) {
+        public boolean hasMethod(String name, @Nullable Object... arguments) {
             return isConfigureMethod(name, arguments);
         }
 
         @Override
-        public DynamicInvokeResult tryInvokeMethod(String name, Object... arguments) {
+        public DynamicInvokeResult tryInvokeMethod(String name, @Nullable Object... arguments) {
             if (isConfigureMethod(name, arguments)) {
                 return DynamicInvokeResult.found(ConfigureUtil.configure((Closure) arguments[0], getByName(name)));
             }
             return DynamicInvokeResult.notFound();
         }
 
-        private boolean isConfigureMethod(String name, Object... arguments) {
-            return (arguments.length == 1 && arguments[0] instanceof Closure) && hasProperty(name);
+        private boolean isConfigureMethod(String name, @Nullable Object... arguments) {
+            return arguments.length == 1 && arguments[0] instanceof Closure && hasProperty(name);
         }
     }
 
@@ -561,7 +587,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
         NavigableMap<String, T> asMap();
 
-        <S extends T> Index<S> filter(CollectionFilter<S> filter);
+        <S extends T> Index<S> filter(Spec<String> nameFilter, CollectionFilter<S> elementFilter);
 
         @Nullable
         ProviderInternal<? extends T> getPending(String name);
@@ -576,7 +602,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
     }
 
     protected static class UnfilteredIndex<T> implements Index<T> {
-        private final Map<String, ProviderInternal<? extends T>> pendingMap = Maps.newLinkedHashMap();
+        private final Map<String, ProviderInternal<? extends T>> pendingMap = new LinkedHashMap<>();
         private final NavigableMap<String, T> map = new TreeMap<String, T>();
 
         @Override
@@ -606,8 +632,8 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         }
 
         @Override
-        public <S extends T> Index<S> filter(CollectionFilter<S> filter) {
-            return new FilteredIndex<S>(this, filter);
+        public <S extends T> Index<S> filter(Spec<String> nameFilter, CollectionFilter<S> elementFilter) {
+            return new FilteredIndex<>(this, nameFilter, elementFilter);
         }
 
         @Nullable
@@ -640,11 +666,15 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
     private static class FilteredIndex<T> implements Index<T> {
 
         private final Index<? super T> delegate;
-        private final CollectionFilter<T> filter;
 
-        FilteredIndex(Index<? super T> delegate, CollectionFilter<T> filter) {
+        private final Spec<String> nameFilter;
+
+        private final CollectionFilter<T> elementFilter;
+
+        FilteredIndex(Index<? super T> delegate, Spec<String> nameFilter, CollectionFilter<T> elementFilter) {
             this.delegate = delegate;
-            this.filter = filter;
+            this.nameFilter = nameFilter;
+            this.elementFilter = elementFilter;
         }
 
         @Override
@@ -654,7 +684,11 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
         @Override
         public T get(String name) {
-            return filter.filter(delegate.get(name));
+            if (!nameFilter.isSatisfiedBy(name)) {
+                return null;
+            }
+            Object value = delegate.get(name);
+            return elementFilter.filter(value);
         }
 
         @Override
@@ -671,11 +705,16 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         public NavigableMap<String, T> asMap() {
             NavigableMap<String, ? super T> delegateMap = delegate.asMap();
 
-            NavigableMap<String, T> filtered = new TreeMap<String, T>();
+            NavigableMap<String, T> filtered = new TreeMap<>();
             for (Map.Entry<String, ? super T> entry : delegateMap.entrySet()) {
-                T obj = filter.filter(entry.getValue());
+                String name = entry.getKey();
+                if (!nameFilter.isSatisfiedBy(name)) {
+                    continue;
+                }
+                Object value = entry.getValue();
+                T obj = elementFilter.filter(value);
                 if (obj != null) {
-                    filtered.put(entry.getKey(), obj);
+                    filtered.put(name, obj);
                 }
             }
 
@@ -683,19 +722,22 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         }
 
         @Override
-        public <S extends T> Index<S> filter(CollectionFilter<S> filter) {
-            return new FilteredIndex<S>(delegate, this.filter.and(filter));
+        public <S extends T> Index<S> filter(Spec<String> nameFilter, CollectionFilter<S> collectionFilter) {
+            return new FilteredIndex<>(
+                delegate,
+                Specs.intersect(this.nameFilter, nameFilter),
+                this.elementFilter.and(collectionFilter)
+            );
         }
 
         @Nullable
         @Override
         public ProviderInternal<? extends T> getPending(String name) {
             ProviderInternal<?> provider = delegate.getPending(name);
-            if (provider != null && provider.getType() != null && filter.getType().isAssignableFrom(provider.getType())) {
-                return Cast.uncheckedNonnullCast(provider);
-            } else {
-                return null;
+            if (isPendingSatisfyingFilters(name, provider)) {
+                return Cast.uncheckedCast(provider);
             }
+            return null;
         }
 
         @Override
@@ -717,15 +759,27 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         public Map<String, ProviderInternal<? extends T>> getPendingAsMap() {
             // TODO not sure if we can clean up the generics here and do less unchecked casting
             Map<String, ProviderInternal<?>> delegateMap = Cast.uncheckedCast(delegate.getPendingAsMap());
-            Map<String, ProviderInternal<? extends T>> filteredMap = Maps.newLinkedHashMap();
+            Map<String, ProviderInternal<? extends T>> filteredMap = new LinkedHashMap<>();
             for (Map.Entry<String, ProviderInternal<?>> entry : delegateMap.entrySet()) {
-                if (entry.getValue().getType() != null && filter.getType().isAssignableFrom(entry.getValue().getType())) {
-                    ProviderInternal<? extends T> typedValue = Cast.uncheckedCast(entry.getValue());
-                    filteredMap.put(entry.getKey(), typedValue);
+                String name = entry.getKey();
+                ProviderInternal<?> provider = entry.getValue();
+                if (isPendingSatisfyingFilters(name, provider)) {
+                    filteredMap.put(entry.getKey(), Cast.uncheckedCast(provider));
                 }
             }
             return filteredMap;
         }
+
+        private boolean isPendingSatisfyingFilters(String name, @Nullable ProviderInternal<?> provider) {
+            if (!nameFilter.isSatisfiedBy(name)) {
+                return false;
+            }
+            if (provider != null) {
+                return provider.getType() != null && elementFilter.getType().isAssignableFrom(provider.getType());
+            }
+            return false;
+        }
+
     }
 
     public interface ElementInfo<T> {
@@ -775,7 +829,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
     }
 
     @Nullable
-    protected NamedDomainObjectProvider<? extends T> findDomainObject(String name) {
+    private NamedDomainObjectProvider<? extends T> findDomainObject(String name) {
         NamedDomainObjectProvider<? extends T> provider = searchForDomainObject(name);
         // Run the rules and try to find something again.
         if (provider == null) {
@@ -836,7 +890,7 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
         }
 
         @Override
-        public String toString() {
+        protected String toStringNoReentrance() {
             return String.format("provider(%s '%s', %s)", getTypeDisplayName(), getName(), getType());
         }
     }
@@ -849,8 +903,8 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
         @Override
         public void configure(Action<? super I> action) {
-            assertMutable("NamedDomainObjectProvider.configure(Action)");
-            withMutationDisabled(action).execute(get());
+            assertEagerContext("NamedDomainObjectProvider.configure(Action)");
+            wrapLazyAction(action).execute(get());
         }
 
         @Override
@@ -894,8 +948,13 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
 
         @Override
         public void configure(final Action<? super I> action) {
-            assertMutable("NamedDomainObjectProvider.configure(Action)");
-            Action<? super I> wrappedAction = withMutationDisabled(action);
+            assertEagerContext("NamedDomainObjectProvider.configure(Action)");
+
+            if (action == Actions.doNothing()) {
+                return;
+            }
+
+            Action<? super I> wrappedAction = wrapLazyAction(action);
             Action<? super I> decoratedAction = getEventRegister().getDecorator().decorate(wrappedAction);
 
             if (object != null) {
@@ -937,13 +996,20 @@ public class DefaultNamedDomainObjectCollection<T> extends DefaultDomainObjectCo
                 // Collect any container level add actions added since the last call to configure()
                 onCreate = onCreate.mergeFrom(getEventRegister().getAddActions());
 
-                // Create the domain object
-                object = createDomainObject();
-
-                // Register the domain object
-                add(object, onCreate);
-                realized(AbstractDomainObjectCreatingProvider.this);
-                onLazyDomainObjectRealized();
+                try (EvaluationScopeContext scope = openScope()) {
+                    // Create the domain object
+                    object = createDomainObject();
+                    // Configuring the domain object may cause circular evaluation, but after initializing this.object
+                    // calculateOwnValue short-circuits it at a cost of exposing a partially constructed value.
+                    // Because of that the circular evaluation that goes through this provider doesn't cause stack overflow.
+                    // To avoid breaking existing code, we open a nested evaluation scope here to allow re-entering the chain.
+                    try (EvaluationScopeContext ignored = scope.nested()) {
+                        // Register the domain object
+                        doAdd(object, onCreate);
+                        realized(AbstractDomainObjectCreatingProvider.this);
+                        onLazyDomainObjectRealized();
+                    }
+                }
             } catch (Throwable ex) {
                 failure = domainObjectCreationException(ex);
                 throw failure;

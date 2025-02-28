@@ -32,6 +32,7 @@ import com.github.javaparser.ast.nodeTypes.NodeWithSimpleName
 import com.github.javaparser.javadoc.Javadoc
 import com.github.javaparser.javadoc.description.JavadocSnippet
 import com.github.javaparser.symbolsolver.JavaSymbolSolver
+import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver
@@ -47,28 +48,32 @@ import java.io.File
 abstract class IncubatingApiReportWorkAction : WorkAction<IncubatingApiReportParameter> {
 
     override fun execute() {
-        val versionToIncubating = mutableMapOf<Version, MutableSet<IncubatingDescription>>()
-        parameters.srcDirs.forEach { srcDir ->
-            if (srcDir.exists()) {
-                val collector = CompositeVersionsToIncubatingCollector(
-                    listOf(
-                        JavaVersionsToIncubatingCollector(srcDir),
-                        KotlinVersionsToIncubatingCollector()
+        try {
+            val versionToIncubating = mutableMapOf<Version, MutableSet<IncubatingDescription>>()
+            parameters.srcDirs.forEach { srcDir ->
+                if (srcDir.exists()) {
+                    val collector = CompositeVersionsToIncubatingCollector(
+                        listOf(
+                            JavaVersionsToIncubatingCollector(srcDir),
+                            KotlinVersionsToIncubatingCollector()
+                        )
                     )
-                )
-                srcDir.walkTopDown().forEach { sourceFile ->
-                    try {
-                        collector.collectFrom(sourceFile).forEach { (version, incubating) ->
-                            versionToIncubating.getOrPut(version) { mutableSetOf() }.addAll(incubating)
+                    srcDir.walkTopDown().forEach { sourceFile ->
+                        try {
+                            collector.collectFrom(sourceFile).forEach { (version, incubating) ->
+                                versionToIncubating.getOrPut(version) { mutableSetOf() }.addAll(incubating)
+                            }
+                        } catch (e: Exception) {
+                            throw Exception("Unable to parse $sourceFile", e)
                         }
-                    } catch (e: Exception) {
-                        throw Exception("Unable to parse $sourceFile", e)
                     }
                 }
             }
+            generateTextReport(versionToIncubating)
+            generateHtmlReport(versionToIncubating)
+        } finally {
+            JavaParserFacade.clearInstances()
         }
-        generateTextReport(versionToIncubating)
-        generateHtmlReport(versionToIncubating)
     }
 
     private
@@ -181,7 +186,7 @@ class CompositeVersionsToIncubatingCollector(
 
 
 private
-const val versionNotFound = "Not found"
+const val VERSION_NOT_FOUND = "Not found"
 
 
 private
@@ -220,7 +225,7 @@ class JavaVersionsToIncubatingCollector(srcDir: File) : VersionsToIncubatingColl
             (node as? NodeWithJavadoc<*>)?.javadoc?.orElse(null)?.let { findVersionFromJavadoc(it) }
                 // This is needed to find the JavaDoc of a package declaration in 'package-info.java'
                 ?: (node as? PackageDeclaration)?.parentNode?.get()?.childNodes?.filterIsInstance<JavadocComment>()?.singleOrNull()?.parse()?.let { findVersionFromJavadoc(it) }
-                ?: versionNotFound,
+                ?: VERSION_NOT_FOUND,
             nodeName(node, this, sourceFile)
         )
 
@@ -250,7 +255,7 @@ class JavaVersionsToIncubatingCollector(srcDir: File) : VersionsToIncubatingColl
     private
     inline fun tryResolve(resolver: () -> String, or: () -> String) = try {
         resolver()
-    } catch (e: Throwable) {
+    } catch (_: Throwable) {
         or()
     }
 }
@@ -321,7 +326,7 @@ class KotlinVersionsToIncubatingCollector : VersionsToIncubatingCollector {
     private
     val KtNamedDeclaration.sinceVersion: String
         get() = docComment?.getDefaultSection()?.findTagsByName("since")?.singleOrNull()?.getContent()
-            ?: versionNotFound
+            ?: VERSION_NOT_FOUND
 }
 
 

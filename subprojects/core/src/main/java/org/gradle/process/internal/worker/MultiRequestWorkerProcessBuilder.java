@@ -16,7 +16,6 @@
 
 package org.gradle.process.internal.worker;
 
-import org.gradle.api.Action;
 import org.gradle.internal.serialize.Serializer;
 
 /**
@@ -38,17 +37,17 @@ public interface MultiRequestWorkerProcessBuilder<IN, OUT> extends WorkerProcess
     MultiRequestClient<IN, OUT> build();
 
     /**
-     * Registers a callback to invoke if a failure in an underlying process is detected.
-     */
-    void onProcessFailure(Action<WorkerProcess> action);
-
-    /**
      * Registers a serializer to use when handling arguments to methods of {@link T}.
      */
     <T> void registerArgumentSerializer(Class<T> type, Serializer<T> serializer);
 
     /**
-     * Use a simpler classloader structure where everything is in the application classloader.
+     * Do not automatically detect the implementation classloader from the worker implementation class.
+     * Instead, users of this builder are expected to provide the complete classpath for the worker process,
+     * including any classes necessary to load the worker implementation.
+     * <p>
+     * By default, the classpath for the worker implementation class is inferred from the classpath
+     * of the classloader of the implementation class.
      */
-    void useApplicationClassloaderOnly();
+    void withoutAutomaticImplementationClasspath();
 }

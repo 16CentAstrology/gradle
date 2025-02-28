@@ -20,7 +20,9 @@ import org.gradle.api.internal.GradleInternal;
 import org.gradle.api.internal.SettingsInternal;
 import org.gradle.execution.EntryTaskSelector;
 import org.gradle.execution.plan.BuildWorkPlan;
-import org.gradle.execution.plan.Node;
+import org.gradle.execution.plan.ScheduledWork;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
 
 import javax.annotation.Nullable;
 import java.util.List;
@@ -30,6 +32,7 @@ import java.util.function.Function;
 /**
  * Controls the lifecycle of an individual build in the build tree.
  */
+@ServiceScope(Scope.Build.class)
 public interface BuildLifecycleController {
     /**
      * Returns the current state of the mutable model for this build.
@@ -124,7 +127,17 @@ public interface BuildLifecycleController {
     /**
      * Restarts the lifecycle of this build.
      */
-    void resetLifecycle();
+    void resetModel();
+
+    /**
+     * Runs whatever work is required prior to discarding the model for this build. This is called prior to calling {@link #resetModel()}.
+     */
+    ExecutionResult<Void> beforeModelReset();
+
+    /**
+     * Runs whatever work is required prior to discarding the model for this build. This is called at the end of the build, after {@link #finishBuild(Throwable)}.
+     */
+    ExecutionResult<Void> beforeModelDiscarded(boolean failed);
 
     interface WorkGraphBuilder {
         /**
@@ -140,6 +153,6 @@ public interface BuildLifecycleController {
         /**
          * Sets the set of scheduled node to the work graph for this build. Short-circuits dependency discovery and any sorting. Nodes must be restored in the same order they were scheduled.
          */
-        void setScheduledNodes(List<? extends Node> nodes);
+        void setScheduledWork(ScheduledWork work);
     }
 }

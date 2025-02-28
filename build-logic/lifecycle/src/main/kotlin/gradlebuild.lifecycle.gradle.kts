@@ -43,6 +43,7 @@ setupTimeoutMonitorOnCI()
 setupGlobalState()
 
 tasks.registerDistributionsPromotionTasks()
+tasks.registerPublishBuildLogicTasks()
 
 tasks.registerEarlyFeedbackRootLifecycleTasks()
 
@@ -52,8 +53,8 @@ tasks.registerEarlyFeedbackRootLifecycleTasks()
 fun setupTimeoutMonitorOnCI() {
     if (BuildEnvironment.isCiServer && project.name != "gradle-kotlin-dsl-accessors") {
         project.gradle.sharedServices.registerIfAbsent("printStackTracesOnTimeoutBuildService", PrintStackTracesOnTimeoutBuildService::class.java) {
-            parameters.timeoutMillis.set(determineTimeoutMillis())
-            parameters.projectDirectory.set(layout.projectDirectory)
+            parameters.timeoutMillis = determineTimeoutMillis()
+            parameters.projectDirectory = layout.projectDirectory
         }.get()
     }
 }
@@ -107,14 +108,30 @@ fun TaskContainer.registerEarlyFeedbackRootLifecycleTasks() {
 
 /**
  * Task that are called by the (currently separate) promotion build running on CI.
+ * Promotion build runs `./gradlew promotionBuild`, which depends on this `:packageBuild` task.
+ * BuildDistribution job runs `./gradlew packageBuild` directly.
  */
 fun TaskContainer.registerDistributionsPromotionTasks() {
     register("packageBuild") {
         description = "Build production distros and smoke test them"
         group = "build"
         dependsOn(
-            ":distributions-full:verifyIsProductionBuildEnvironment", ":distributions-full:buildDists",
+            ":distributions-full:verifyIsProductionBuildEnvironment", ":distributions-full:buildDists", ":distributions-full:copyDistributionsToRootBuild",
             ":distributions-integ-tests:forkingIntegTest", ":docs:releaseNotes", ":docs:incubationReport", ":docs:checkDeadInternalLinks"
+        )
+    }
+}
+
+/**
+ * To publish packages in build-logic we need to do it separately.
+ * Promotion build runs `./gradlew promotionBuild`, which depends on this `:publishBuildLogic` task.
+ */
+fun TaskContainer.registerPublishBuildLogicTasks() {
+    register("publishBuildLogic") {
+        description = "Publish subprojects in build-logic"
+        group = "build"
+        dependsOn(
+            gradle.includedBuild("build-logic").task(":java-api-extractor:publish")
         )
     }
 }

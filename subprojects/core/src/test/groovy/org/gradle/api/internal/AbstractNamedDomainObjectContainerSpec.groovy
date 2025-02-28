@@ -16,11 +16,10 @@
 
 package org.gradle.api.internal
 
-
 import org.gradle.api.NamedDomainObjectContainer
-import org.gradle.configuration.internal.UserCodeApplicationId
 import org.gradle.internal.Actions
-import org.gradle.internal.DisplayName
+import org.gradle.internal.code.UserCodeApplicationId
+import org.gradle.internal.code.UserCodeSource
 
 abstract class AbstractNamedDomainObjectContainerSpec<T> extends AbstractNamedDomainObjectCollectionSpec<T> {
     abstract NamedDomainObjectContainer<T> getContainer()
@@ -86,13 +85,13 @@ abstract class AbstractNamedDomainObjectContainerSpec<T> extends AbstractNamedDo
         UserCodeApplicationId id1 = null
         UserCodeApplicationId id2 = null
         List<UserCodeApplicationId> ids = []
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             id1 = it
             container.register("a") {
                 ids << userCodeApplicationContext.current()
             }
         }
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             id2 = it
             container.named("a").configure {
                 ids << userCodeApplicationContext.current()
@@ -100,16 +99,29 @@ abstract class AbstractNamedDomainObjectContainerSpec<T> extends AbstractNamedDo
         }
 
         then:
-        buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
+        buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
 
         when:
         container.getByName("a")
 
         then:
-        def ops = buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
+        def ops = buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
         ops.size() == 2
         ids.size() == 2
         ops[0].details.applicationId == id1.longValue()
         ops[1].details.applicationId == id2.longValue()
+    }
+
+    def "can configure task based on its provider"() {
+        given:
+        setupContainerDefaults()
+        def p = container.register("r1")
+        def derived = p.map { "value" }
+        p.configure {
+            derived.get()
+        }
+
+        expect:
+        "value" == derived.get()
     }
 }

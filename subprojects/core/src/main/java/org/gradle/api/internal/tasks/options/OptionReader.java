@@ -16,19 +16,21 @@
 
 package org.gradle.api.internal.tasks.options;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
-import org.gradle.api.specs.Specs;
+import com.google.common.reflect.TypeToken;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.options.Option;
 import org.gradle.api.tasks.options.OptionValues;
 import org.gradle.internal.reflect.JavaMethod;
+import org.gradle.internal.reflect.JavaReflectionUtil;
 import org.gradle.util.internal.CollectionUtils;
 
 import javax.annotation.Nullable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,66 +38,33 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class OptionReader {
     private final ListMultimap<Class<?>, OptionElement> cachedOptionElements = ArrayListMultimap.create();
-    private final Map<OptionElement, JavaMethod<Object, Collection>> cachedOptionValueMethods = new HashMap<OptionElement, JavaMethod<Object, Collection>>();
+    private final Map<OptionElement, JavaMethod<Object, ?>> cachedOptionValueMethods = new HashMap<>();
     private final OptionValueNotationParserFactory optionValueNotationParserFactory = new OptionValueNotationParserFactory();
 
-    @VisibleForTesting
-    static final Map<String, BuiltInOptionElement> BUILT_IN_OPTIONS = Stream.of(
-        new BuiltInOptionElement(
-            "Causes the task to be re-run even if up-to-date.",
-            "rerun",
-            task -> task.getOutputs().upToDateWhen(Specs.satisfyNone())
-        )
-    ).collect(Collectors.toMap(BuiltInOptionElement::getOptionName, Function.identity(), (a, b) -> a, LinkedHashMap::new));
 
-    /**
-     * Builds a list of implicit built-in options available for every task.
-     */
-    private List<OptionDescriptor> buildBuiltInOptions(Object target, Collection<String> reserved) {
-        return BUILT_IN_OPTIONS.values().stream().map(optionElement ->
-            new InstanceOptionDescriptor(target, optionElement, null, reserved.contains(optionElement.getOptionName()))
-        ).collect(Collectors.toList());
-    }
-
-    public List<OptionDescriptor> getOptions(Object target) {
-        return getOptions(target, true);
-    }
-
-    public List<OptionDescriptor> getOptions(Object target, boolean validOnly) {
+    public Map<String, OptionDescriptor> getOptions(Object target) {
         final Class<?> targetClass = target.getClass();
         Map<String, OptionDescriptor> options = new HashMap<String, OptionDescriptor>();
         if (!cachedOptionElements.containsKey(targetClass)) {
             loadClassDescriptorInCache(target);
         }
         for (OptionElement optionElement : cachedOptionElements.get(targetClass)) {
-            JavaMethod<Object, Collection> optionValueMethod = cachedOptionValueMethods.get(optionElement);
+            JavaMethod<Object, ?> optionValueMethod = cachedOptionValueMethods.get(optionElement);
             options.put(optionElement.getOptionName(), new InstanceOptionDescriptor(target, optionElement, optionValueMethod));
         }
-        List<OptionDescriptor> taskOptions = CollectionUtils.sort(options.values());
-        for (OptionDescriptor builtInOption : buildBuiltInOptions(target, options.keySet())) {
-            // built-in options only enabled if they do not clash with task-declared ones
-            if (!validOnly || !builtInOption.isClashing()) {
-                taskOptions.add(builtInOption);
-            }
-        }
-
-        return taskOptions;
+        return options;
     }
 
     private void loadClassDescriptorInCache(Object target) {
         final Collection<OptionElementAndSignature> optionElements = getOptionElements(target);
-        List<JavaMethod<Object, Collection>> optionValueMethods = loadValueMethodForOption(target.getClass());
+        List<JavaMethod<Object, ?>> optionValueMethods = loadValueMethodForOption(target.getClass());
         Map<String, MethodSignature> processedOptionElements = new HashMap<>();
         for (OptionElementAndSignature optionElementAndSignature : optionElements) {
             OptionElement optionElement = optionElementAndSignature.element;
@@ -110,16 +79,16 @@ public class OptionReader {
                 continue;
             }
             processedOptionElements.put(optionElement.getOptionName(), signature);
-            JavaMethod<Object, Collection> optionValueMethodForOption = getOptionValueMethodForOption(optionValueMethods, optionElement);
+            JavaMethod<Object, ?> optionValueMethodForOption = getOptionValueMethodForOption(optionValueMethods, optionElement);
 
             cachedOptionElements.put(target.getClass(), optionElement);
             cachedOptionValueMethods.put(optionElement, optionValueMethodForOption);
         }
     }
 
-    private static JavaMethod<Object, Collection> getOptionValueMethodForOption(List<JavaMethod<Object, Collection>> optionValueMethods, OptionElement optionElement) {
-        JavaMethod<Object, Collection> valueMethod = null;
-        for (JavaMethod<Object, Collection> optionValueMethod : optionValueMethods) {
+    private static JavaMethod<Object, ?> getOptionValueMethodForOption(List<JavaMethod<Object, ?>> optionValueMethods, OptionElement optionElement) {
+        JavaMethod<Object, ?> valueMethod = null;
+        for (JavaMethod<Object, ?> optionValueMethod : optionValueMethods) {
             String[] optionNames = getOptionNames(optionValueMethod);
             if (CollectionUtils.toList(optionNames).contains(optionElement.getOptionName())) {
                 if (valueMethod == null) {
@@ -135,7 +104,7 @@ public class OptionReader {
         return valueMethod;
     }
 
-    private static String[] getOptionNames(JavaMethod<Object, Collection> optionValueMethod) {
+    private static String[] getOptionNames(JavaMethod<Object, ?> optionValueMethod) {
         OptionValues optionValues = optionValueMethod.getMethod().getAnnotation(OptionValues.class);
         return optionValues.value();
     }
@@ -226,11 +195,11 @@ public class OptionReader {
         return option;
     }
 
-    private static List<JavaMethod<Object, Collection>> loadValueMethodForOption(Class<?> declaredClass) {
-        List<JavaMethod<Object, Collection>> methods = new ArrayList<JavaMethod<Object, Collection>>();
+    private static List<JavaMethod<Object, ?>> loadValueMethodForOption(Class<?> declaredClass) {
+        List<JavaMethod<Object, ?>> methods = new ArrayList<>();
         for (Class<?> type = declaredClass; type != Object.class && type != null; type = type.getSuperclass()) {
             for (Method method : type.getDeclaredMethods()) {
-                JavaMethod<Object, Collection> optionValuesMethod = getAsOptionValuesMethod(type, method);
+                JavaMethod<Object, ?> optionValuesMethod = getAsOptionValuesMethod(type, method);
                 if (optionValuesMethod != null) {
                     methods.add(optionValuesMethod);
                 }
@@ -239,21 +208,33 @@ public class OptionReader {
         return methods;
     }
 
-    private static JavaMethod<Object, Collection> getAsOptionValuesMethod(Class<?> type, Method method) {
+    private static JavaMethod<Object, ?> getAsOptionValuesMethod(Class<?> type, Method method) {
         OptionValues optionValues = method.getAnnotation(OptionValues.class);
         if (optionValues == null) {
             return null;
         }
-        if (Collection.class.isAssignableFrom(method.getReturnType())
-            && method.getParameterTypes().length == 0
-            && !Modifier.isStatic(method.getModifiers())) {
-            return JavaMethod.of(Collection.class, method);
-        } else {
-            throw new OptionValidationException(
-                String.format("@OptionValues annotation not supported on method '%s' in class '%s'. Supported method must be non-static, return a Collection<String> and take no parameters.",
-                    method.getName(),
-                    type.getName()));
+        if (method.getParameterTypes().length == 0 && !Modifier.isStatic(method.getModifiers())) {
+            if (Collection.class.isAssignableFrom(method.getReturnType())) {
+                return JavaMethod.of(Collection.class, method);
+            } else if (Provider.class.equals(method.getReturnType())
+                && Collection.class.isAssignableFrom(getProviderNestedRawType(method.getGenericReturnType()))) {
+                return JavaMethod.of(Provider.class, method);
+            }
         }
+        throw new OptionValidationException(
+            String.format("@OptionValues annotation not supported on method '%s' in class '%s'. " +
+                    "Supported method must be non-static, return a Collection<String> or Provider<Collection<String>> and take no parameters.",
+                method.getName(),
+                type.getName())
+        );
     }
 
+    /**
+     * Returns Provider's nested raw type.
+     */
+    @SuppressWarnings("unchecked")
+    private static Class<?> getProviderNestedRawType(Type providerType) {
+        TypeToken<Provider<?>> typeToken = (TypeToken<Provider<?>>) TypeToken.of(providerType);
+        return JavaReflectionUtil.extractNestedType(typeToken, Provider.class, 0).getRawType();
+    }
 }

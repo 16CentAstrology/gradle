@@ -18,12 +18,16 @@ package org.gradle.internal.buildtree;
 
 import org.gradle.execution.EntryTaskSelector;
 import org.gradle.internal.build.ExecutionResult;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
 
 import javax.annotation.Nullable;
 
-@ServiceScope(Scopes.BuildTree.class)
+@ServiceScope(Scope.BuildTree.class)
 public interface BuildTreeWorkController {
+
+    /**
+     * Schedules and runs requested tasks based on the provided {@code taskSelector}.
+     */
     ExecutionResult<Void> scheduleAndRunRequestedTasks(@Nullable EntryTaskSelector taskSelector);
 }

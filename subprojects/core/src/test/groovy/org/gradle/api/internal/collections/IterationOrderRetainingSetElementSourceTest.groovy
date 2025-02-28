@@ -16,20 +16,11 @@
 
 package org.gradle.api.internal.collections
 
-import org.gradle.api.Action
+import spock.lang.Issue
 
 
 class IterationOrderRetainingSetElementSourceTest extends AbstractIterationOrderRetainingElementSourceTest {
     IterationOrderRetainingSetElementSource<CharSequence> source = new IterationOrderRetainingSetElementSource<>()
-
-    def setup() {
-        source.onRealize(new Action<CharSequence>() {
-            @Override
-            void execute(CharSequence t) {
-                source.addRealized(t)
-            }
-        })
-    }
 
     def "can add the same provider twice"() {
         def provider = provider("foo")
@@ -157,5 +148,17 @@ class IterationOrderRetainingSetElementSourceTest extends AbstractIterationOrder
         then:
         addResult
         source.iterator().collect() == ["foo"]
+    }
+
+    @Issue("https://github.com/gradle/gradle/issues/22707")
+    def "size and empty are correctly evaluated when an empty provider is added"() {
+        def emptyProvider = setProvider()
+
+        when:
+        source.addPendingCollection(emptyProvider)
+
+        then:
+        source.size() == 0
+        source.isEmpty()
     }
 }

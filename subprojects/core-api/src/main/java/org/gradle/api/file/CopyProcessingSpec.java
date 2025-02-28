@@ -19,6 +19,7 @@ import groovy.lang.Closure;
 import groovy.lang.DelegatesTo;
 import org.gradle.api.Action;
 import org.gradle.api.Transformer;
+import org.gradle.api.provider.Property;
 
 import javax.annotation.Nullable;
 import java.util.regex.Pattern;
@@ -88,8 +89,11 @@ public interface CopyProcessingSpec extends ContentFilterable {
      * will actually be applied.
      *
      * @return The file permissions, or {@code null} if existing permissions should be preserved.
+     *
+     * @deprecated Use {@link #getFilePermissions()} instead. This method is scheduled for removal in Gradle 9.0.
      */
     @Nullable
+    @Deprecated
     Integer getFileMode();
 
     /**
@@ -99,7 +103,10 @@ public interface CopyProcessingSpec extends ContentFilterable {
      *
      * @param mode The file permissions.
      * @return this
+     *
+     * @deprecated Use {@link #filePermissions(Action)} instead. This method is scheduled for removal in Gradle 9.0.
      */
+    @Deprecated
     CopyProcessingSpec setFileMode(@Nullable Integer mode);
 
     /**
@@ -108,8 +115,11 @@ public interface CopyProcessingSpec extends ContentFilterable {
      * will actually be applied.
      *
      * @return The directory permissions, or {@code null} if existing permissions should be preserved.
+     *
+     * @deprecated Use {@link #getDirPermissions()} instead. This method is scheduled for removal in Gradle 9.0.
      */
     @Nullable
+    @Deprecated
     Integer getDirMode();
 
     /**
@@ -119,8 +129,49 @@ public interface CopyProcessingSpec extends ContentFilterable {
      *
      * @param mode The directory permissions.
      * @return this
+     *
+     * @deprecated Use {@link #dirPermissions(Action)} instead. This method is scheduled for removal in Gradle 9.0.
      */
+    @Deprecated
     CopyProcessingSpec setDirMode(@Nullable Integer mode);
+
+    /**
+     * Property for querying and configuring file access permissions.
+     * If the property has no value set, that means that existing permissions are preserved.
+     * It is dependent on the copy action implementation whether these permissions will actually be applied.
+     *
+     * For details see {@link ConfigurableFilePermissions}.
+     *
+     * @since 8.3
+     */
+    Property<ConfigurableFilePermissions> getFilePermissions();
+
+    /**
+     * Configuration action for specifying file access permissions.
+     * For details see {@link ConfigurableFilePermissions}.
+     *
+     * @since 8.3
+     */
+    CopyProcessingSpec filePermissions(Action<? super ConfigurableFilePermissions> configureAction);
+
+    /**
+     * Property for querying and configuring directory access permissions.
+     * If the property has no value set, that means that existing permissions are preserved.
+     * It is dependent on the copy action implementation whether these permissions will actually be applied.
+     *
+     * For details see {@link ConfigurableFilePermissions}.
+     *
+     * @since 8.3
+     */
+    Property<ConfigurableFilePermissions> getDirPermissions();
+
+    /**
+     * Configuration action for specifying directory access permissions.
+     * For details see {@link ConfigurableFilePermissions}.
+     *
+     * @since 8.3
+     */
+    CopyProcessingSpec dirPermissions(Action<? super ConfigurableFilePermissions> configureAction);
 
     /**
      * Adds an action to be applied to each file as it is about to be copied into its destination. The action can change

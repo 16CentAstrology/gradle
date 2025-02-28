@@ -70,7 +70,8 @@ public abstract class Node {
     private int index;
     private DependencyNodesSet dependencyNodes = DependencyNodesSet.EMPTY;
     private DependentNodesSet dependentNodes = DependentNodesSet.EMPTY;
-    private final MutationInfo mutationInfo = new MutationInfo();
+    private MutationInfo mutationInfo = MutationInfo.EMPTY;
+    private final ConsumerState consumerState = new ConsumerState();
     private NodeGroup group = NodeGroup.DEFAULT_GROUP;
 
     @VisibleForTesting
@@ -171,12 +172,17 @@ public abstract class Node {
         }
     }
 
+    /**
+     * Maybe update the group for this node when its dependencies are in groups with higher ordinal.
+     *
+     * That way we can ensure that the node is executed after all its dependencies, and we get rid of potential cycles.
+     */
     public void maybeUpdateOrdinalGroup() {
         OrdinalGroup ordinal = getGroup().asOrdinal();
         OrdinalGroup newOrdinal = ordinal;
         for (Node successor : getHardSuccessors()) {
             OrdinalGroup successorOrdinal = successor.getGroup().asOrdinal();
-            if (successorOrdinal != null && (ordinal == null || successorOrdinal.getOrdinal() > ordinal.getOrdinal())) {
+            if (successorOrdinal != null && (newOrdinal == null || successorOrdinal.getOrdinal() > newOrdinal.getOrdinal())) {
                 newOrdinal = successorOrdinal;
             }
         }
@@ -382,7 +388,7 @@ public abstract class Node {
 
     void addDependencyPredecessor(Node fromNode) {
         dependentNodes = dependentNodes.addDependencyPredecessors(fromNode);
-        mutationInfo.addConsumer(fromNode);
+        consumerState.addConsumer(fromNode);
     }
 
     void addMustPredecessor(TaskNode fromNode) {
@@ -532,6 +538,16 @@ public abstract class Node {
         return dependencyNodes.getDependencySuccessors();
     }
 
+    /**
+     * Iterates over the nodes which are hard successors applying a visitor, i.e. which have a non-removable relationship to the current node.
+     *
+     * This can be a more efficient way to iterate over the successors than {@link #getHardSuccessors()}.
+     */
+    @OverridingMethodsMustInvokeSuper
+    public void visitHardSuccessors(Consumer<? super Node> visitor) {
+        dependencyNodes.getDependencySuccessors().forEach(visitor);
+    }
+
     public SortedSet<Node> getFinalizers() {
         return dependentNodes.getFinalizers();
     }
@@ -574,8 +590,16 @@ public abstract class Node {
     public void visitPostExecutionNodes(Consumer<? super Node> visitor) {
     }
 
+    public void mutationsResolved(MutationInfo mutationInfo)  {
+        this.mutationInfo = mutationInfo;
+    }
+
     public MutationInfo getMutationInfo() {
         return mutationInfo;
+    }
+
+    public ConsumerState getConsumerState() {
+        return consumerState;
     }
 
     public boolean isPublicNode() {
@@ -603,6 +627,10 @@ public abstract class Node {
 
     /**
      * Returns the resources which should be locked before starting this node.
+     *
+     * This operation should complete quickly,
+     * must not run user code, and
+     * should not need to acquire additional locks.
      */
     public List<? extends ResourceLock> getResourcesToLock() {
         return Collections.emptyList();

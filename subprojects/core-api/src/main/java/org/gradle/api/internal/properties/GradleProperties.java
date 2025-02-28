@@ -16,12 +16,16 @@
 
 package org.gradle.api.internal.properties;
 
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
+
 import javax.annotation.Nullable;
 import java.util.Map;
 
 /**
  * Immutable set of Gradle properties loaded at the start of the build.
  */
+@ServiceScope(Scope.Build.class)
 public interface GradleProperties {
 
     @Nullable
@@ -34,4 +38,6 @@ public interface GradleProperties {
      * @param properties read-only properties to be merged with the set of loaded properties.
      */
     Map<String, Object> mergeProperties(Map<String, Object> properties);
+
+    Map<String, Object> getProperties();
 }

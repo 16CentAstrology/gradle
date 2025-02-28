@@ -5,14 +5,18 @@ plugins {
 description = "Provides plugins that combine and configure other plugins for different kinds of Gradle subprojects"
 
 dependencies {
-    implementation(project(":basics"))
-    implementation(project(":buildquality"))
-    implementation(project(":cleanup"))
-    implementation(project(":dependency-modules"))
-    implementation(project(":jvm"))
-    implementation(project(":profiling"))
-    implementation(project(":publishing"))
+    implementation("gradlebuild:basics")
+    implementation("gradlebuild:publishing")
 
-    implementation("org.gradle.kotlin:gradle-kotlin-dsl-conventions")
+    implementation(projects.buildquality)
+    implementation(projects.cleanup)
+    implementation(projects.dependencyModules)
+    implementation(projects.jvm)
+    implementation(projects.packaging)
+    implementation(projects.profiling)
+
     implementation(kotlin("gradle-plugin"))
+    implementation("com.autonomousapps:dependency-analysis-gradle-plugin") {
+        exclude(group = "com.google.j2objc", module = "j2objc-annotations") // This has no use in Gradle
+    }
 }

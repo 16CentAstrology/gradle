@@ -26,6 +26,11 @@ import java.util.Set;
  * You can create a {@link SetProperty} instance using factory method {@link org.gradle.api.model.ObjectFactory#setProperty(Class)}.
  * </p>
  *
+ * <p>
+ * Instances of this interface are not thread-safe for reading and writing.
+ * It is not safe to share the same SetProperty instance between different projects.
+ * </p>
+ *
  * <p><b>Note:</b> This interface is not intended for implementation by build script or plugin authors.
  *
  * @param <T> the type of elements.
@@ -61,4 +66,23 @@ public interface SetProperty<T> extends Provider<Set<T>>, HasMultipleValues<T> {
      */
     @Override
     SetProperty<T> convention(Provider<? extends Iterable<? extends T>> provider);
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * This is similar to calling {@link #value(Iterable)} with a <code>null</code> argument.
+     * </p>
+     */
+    @Override
+    SetProperty<T> unset();
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * This is similar to calling {@link #convention(Iterable)} with a <code>null</code> argument.
+     * </p>
+     */
+    @Override
+    SetProperty<T> unsetConvention();
 }

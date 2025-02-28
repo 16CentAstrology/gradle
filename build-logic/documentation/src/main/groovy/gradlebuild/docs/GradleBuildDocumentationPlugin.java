@@ -17,6 +17,7 @@
 package gradlebuild.docs;
 
 import gradlebuild.basics.PublicApi;
+import gradlebuild.basics.PublicKotlinDslApi;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
@@ -27,7 +28,6 @@ import org.gradle.api.file.ConfigurableFileTree;
 import org.gradle.api.file.ProjectLayout;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.ProviderFactory;
-import org.gradle.api.tasks.JavaExec;
 import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.Sync;
 import org.gradle.api.tasks.TaskContainer;
@@ -53,6 +53,7 @@ public class GradleBuildDocumentationPlugin implements Plugin<Project> {
 
         project.apply(target -> target.plugin(GradleReleaseNotesPlugin.class));
         project.apply(target -> target.plugin(GradleJavadocsPlugin.class));
+        project.apply(target -> target.plugin(GradleKotlinDslReferencePlugin.class));
         project.apply(target -> target.plugin(GradleDslReferencePlugin.class));
         project.apply(target -> target.plugin(GradleUserManualPlugin.class));
 
@@ -67,11 +68,17 @@ public class GradleBuildDocumentationPlugin implements Plugin<Project> {
             // release notes goes in the root of the docs
             task.from(extension.getReleaseNotes().getRenderedDocumentation());
 
+            // release notes assets go into $root/$assetsName/
+            task.from(extension.getReleaseNotes().getReleaseNotesAssets(), sub -> sub.into(extension.getReleaseNotes().getReleaseNotesAssets().map(dir -> dir.getAsFile().getName())));
+
             // DSL reference goes into dsl/
             task.from(extension.getDslReference().getRenderedDocumentation(), sub -> sub.into("dsl"));
 
             // Javadocs reference goes into javadoc/
             task.from(extension.getJavadocs().getRenderedDocumentation(), sub -> sub.into("javadoc"));
+
+            // Dokka Kotlin DSL reference goes into kotlin-dsl/
+            task.from(extension.getKotlinDslReference().getRenderedDocumentation(), sub -> sub.into("kotlin-dsl"));
 
             // User manual goes into userguide/ (for historical reasons)
             task.from(extension.getUserManual().getRenderedDocumentation(), sub -> sub.into("userguide"));
@@ -103,26 +110,31 @@ public class GradleBuildDocumentationPlugin implements Plugin<Project> {
         sourcesPath.extendsFrom(runtimeClasspath);
 
         extension.getClasspath().from(runtimeClasspath);
+        extension.getSourceRoots().from(sourcesPath.getIncoming().artifactView(v -> v.lenient(true)).getFiles());
         extension.getDocumentedSource().from(sourcesPath.getIncoming().artifactView(v -> v.lenient(true)).getFiles().getAsFileTree().matching(f -> {
-            // Filter out any non-public APIs
             f.include(PublicApi.INSTANCE.getIncludes());
+            // Filter out any non-public APIs
             f.exclude(PublicApi.INSTANCE.getExcludes());
+        }));
+        extension.getKotlinDslSource().from(sourcesPath.getIncoming().artifactView(v -> v.lenient(true)).getFiles().getAsFileTree().matching(f -> {
+            f.include(PublicKotlinDslApi.INSTANCE.getIncludes());
+            // Filter out any non-public APIs
+            f.exclude(PublicKotlinDslApi.INSTANCE.getExcludes());
         }));
     }
 
     private void addUtilityTasks(TaskContainer tasks, GradleDocumentationExtension extension) {
-        tasks.register("serveDocs", JavaExec.class, task -> {
+        tasks.register("serveDocs", ServeDocs.class, task -> {
             task.setDescription("Runs a local webserver to serve generated documentation.");
             task.setGroup("documentation");
 
             int webserverPort = 8000;
             task.getJavaLauncher().set(
                 task.getProject().getExtensions().getByType(JavaToolchainService.class)
-                    .launcherFor(spec -> spec.getLanguageVersion().set(JavaLanguageVersion.of(18)))
+                    .launcherFor(spec -> spec.getLanguageVersion().set(JavaLanguageVersion.of(21)))
             );
-            task.workingDir(extension.getDocumentationRenderedRoot());
-            task.getMainModule().set("jdk.httpserver");
-            task.args("-p", String.valueOf(webserverPort));
+            task.getDocsDirectory().convention(extension.getDocumentationRenderedRoot());
+            task.getPort().convention(webserverPort);
 
             task.dependsOn(extension.getRenderedDocumentation());
         });

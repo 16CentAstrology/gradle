@@ -17,9 +17,7 @@
 package org.gradle.initialization.buildsrc;
 
 import org.gradle.api.internal.GradleInternal;
-import org.gradle.cache.FileLock;
-import org.gradle.cache.FileLockManager;
-import org.gradle.cache.LockOptions;
+import org.gradle.api.internal.initialization.BuildLogicBuildQueue;
 import org.gradle.internal.build.BuildState;
 import org.gradle.internal.build.BuildStateRegistry;
 import org.gradle.internal.build.PublicBuildPath;
@@ -27,34 +25,37 @@ import org.gradle.internal.build.StandAloneNestedBuild;
 import org.gradle.internal.classpath.ClassPath;
 import org.gradle.internal.operations.BuildOperationContext;
 import org.gradle.internal.operations.BuildOperationDescriptor;
-import org.gradle.internal.operations.BuildOperationExecutor;
+import org.gradle.internal.operations.BuildOperationRunner;
 import org.gradle.internal.operations.CallableBuildOperation;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
 
-import java.io.File;
-
-import static org.gradle.cache.internal.filelock.LockOptionsBuilder.mode;
-
-@ServiceScope(Scopes.Build.class)
+@ServiceScope(Scope.Build.class)
 public class BuildSourceBuilder {
     private static final BuildBuildSrcBuildOperationType.Result BUILD_BUILDSRC_RESULT = new BuildBuildSrcBuildOperationType.Result() {
     };
 
     private final BuildState currentBuild;
-    private final FileLockManager fileLockManager;
-    private final BuildOperationExecutor buildOperationExecutor;
+    private final BuildOperationRunner buildOperationRunner;
     private final BuildSrcBuildListenerFactory buildSrcBuildListenerFactory;
     private final BuildStateRegistry buildRegistry;
     private final PublicBuildPath publicBuildPath;
+    private final BuildLogicBuildQueue buildQueue;
 
-    public BuildSourceBuilder(BuildState currentBuild, FileLockManager fileLockManager, BuildOperationExecutor buildOperationExecutor, BuildSrcBuildListenerFactory buildSrcBuildListenerFactory, BuildStateRegistry buildRegistry, PublicBuildPath publicBuildPath) {
+    public BuildSourceBuilder(
+        BuildState currentBuild,
+        BuildOperationRunner buildOperationRunner,
+        BuildSrcBuildListenerFactory buildSrcBuildListenerFactory,
+        BuildStateRegistry buildRegistry,
+        PublicBuildPath publicBuildPath,
+        BuildLogicBuildQueue buildQueue
+    ) {
         this.currentBuild = currentBuild;
-        this.fileLockManager = fileLockManager;
-        this.buildOperationExecutor = buildOperationExecutor;
+        this.buildOperationRunner = buildOperationRunner;
         this.buildSrcBuildListenerFactory = buildSrcBuildListenerFactory;
         this.buildRegistry = buildRegistry;
         this.publicBuildPath = publicBuildPath;
+        this.buildQueue = buildQueue;
     }
 
     public ClassPath buildAndGetClassPath(GradleInternal gradle) {
@@ -63,7 +64,7 @@ public class BuildSourceBuilder {
             return ClassPath.EMPTY;
         }
 
-        return buildOperationExecutor.call(new CallableBuildOperation<ClassPath>() {
+        return buildOperationRunner.call(new CallableBuildOperation<ClassPath>() {
             @Override
             public ClassPath call(BuildOperationContext context) {
                 ClassPath classPath = buildBuildSrc(buildSrcBuild);
@@ -88,22 +89,9 @@ public class BuildSourceBuilder {
         });
     }
 
-    @SuppressWarnings("try")
     private ClassPath buildBuildSrc(StandAloneNestedBuild buildSrcBuild) {
-        return buildSrcBuild.run(buildController -> {
-            try (FileLock ignored = buildSrcBuildLockFor(buildSrcBuild)) {
-                return new BuildSrcUpdateFactory(buildSrcBuildListenerFactory).create(buildController);
-            }
-        });
-    }
-
-    private FileLock buildSrcBuildLockFor(StandAloneNestedBuild build) {
-        return fileLockManager.lock(
-            new File(build.getBuildRootDir(), ".gradle/noVersion/buildSrc"),
-            LOCK_OPTIONS,
-            "buildSrc build lock"
+        return buildQueue.buildBuildSrc(buildSrcBuild, buildController ->
+            new BuildSrcUpdateFactory(buildSrcBuildListenerFactory).create(buildController)
         );
     }
-
-    private static final LockOptions LOCK_OPTIONS = mode(FileLockManager.LockMode.Exclusive).useCrossVersionImplementation();
 }

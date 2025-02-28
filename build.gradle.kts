@@ -1,5 +1,4 @@
 plugins {
-    id("gradlebuild.build-environment")
     id("gradlebuild.root-build")
 
     id("gradlebuild.teamcity-import-test-data")  // CI: Import Test tasks' JUnit XML if they're UP-TO-DATE or FROM-CACHE
@@ -9,7 +8,6 @@ plugins {
 
     id("gradlebuild.update-versions")            // Local development: Convenience tasks to update versions in this build: 'released-versions.json', 'agp-versions.properties', ...
     id("gradlebuild.wrapper")                    // Local development: Convenience tasks to update the wrapper (like 'nightlyWrapper')
-    id("gradlebuild.quick-check")                // Local development: Convenience task `quickCheck` for running checkstyle/codenarc only on changed files before commit
 }
 
 description = "Adaptable, fast automation for all"

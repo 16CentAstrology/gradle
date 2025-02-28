@@ -20,21 +20,25 @@ import org.gradle.api.internal.cache.CacheConfigurationsInternal;
 import org.gradle.cache.scopes.GlobalScopedCacheBuilderFactory;
 import org.gradle.initialization.GradleUserHomeDirProvider;
 import org.gradle.internal.cache.MonitoredCleanupAction;
-import org.gradle.internal.cache.MonitoredCleanupActionDecorator;
 import org.gradle.internal.concurrent.Stoppable;
 import org.gradle.internal.file.Deleter;
-import org.gradle.internal.logging.progress.ProgressLogger;
-import org.gradle.internal.logging.progress.ProgressLoggerFactory;
+import org.gradle.internal.operations.BuildOperationContext;
+import org.gradle.internal.operations.BuildOperationDescriptor;
+import org.gradle.internal.operations.BuildOperationRunner;
+import org.gradle.internal.operations.CallableBuildOperation;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
+import org.gradle.internal.versionedcache.UsedGradleVersions;
 
 import java.io.File;
 
+@ServiceScope(Scope.UserHome.class)
 public class GradleUserHomeCleanupService implements Stoppable {
     private final Deleter deleter;
     private final GradleUserHomeDirProvider userHomeDirProvider;
     private final GlobalScopedCacheBuilderFactory cacheBuilderFactory;
     private final UsedGradleVersions usedGradleVersions;
-    private final ProgressLoggerFactory progressLoggerFactory;
-    private final MonitoredCleanupActionDecorator cleanupActionDecorator;
+    private final BuildOperationRunner buildOperationRunner;
     private final CacheConfigurationsInternal cacheConfigurations;
     private boolean alreadyCleaned;
 
@@ -43,38 +47,30 @@ public class GradleUserHomeCleanupService implements Stoppable {
         GradleUserHomeDirProvider userHomeDirProvider,
         GlobalScopedCacheBuilderFactory cacheBuilderFactory,
         UsedGradleVersions usedGradleVersions,
-        ProgressLoggerFactory progressLoggerFactory,
-        MonitoredCleanupActionDecorator cleanupActionDecorator,
+        BuildOperationRunner buildOperationRunner,
         CacheConfigurationsInternal cacheConfigurations
     ) {
         this.deleter = deleter;
         this.userHomeDirProvider = userHomeDirProvider;
         this.cacheBuilderFactory = cacheBuilderFactory;
         this.usedGradleVersions = usedGradleVersions;
-        this.progressLoggerFactory = progressLoggerFactory;
-        this.cleanupActionDecorator = cleanupActionDecorator;
+        this.buildOperationRunner = buildOperationRunner;
         this.cacheConfigurations = cacheConfigurations;
     }
 
     public void cleanup() {
         File cacheBaseDir = cacheBuilderFactory.getRootDir();
         boolean wasCleanedUp = execute(
-            cleanupActionDecorator.decorate(
-                new VersionSpecificCacheCleanupAction(
-                    cacheBaseDir,
-                    cacheConfigurations.getReleasedWrappers().getRemoveUnusedEntriesOlderThanAsSupplier(),
-                    cacheConfigurations.getSnapshotWrappers().getRemoveUnusedEntriesOlderThanAsSupplier(),
-                    deleter,
-                    cacheConfigurations.getCleanupFrequency().get()
-                )
+            new VersionSpecificCacheCleanupAction(
+                cacheBaseDir,
+                cacheConfigurations.getReleasedWrappers().getEntryRetentionTimestampSupplier(),
+                cacheConfigurations.getSnapshotWrappers().getEntryRetentionTimestampSupplier(),
+                deleter,
+                cacheConfigurations.getCleanupFrequency().get()
             )
         );
         if (wasCleanedUp) {
-            execute(
-                cleanupActionDecorator.decorate(
-                    new WrapperDistributionCleanupAction(userHomeDirProvider.getGradleUserHomeDirectory(), usedGradleVersions)
-                )
-            );
+            execute(new WrapperDistributionCleanupAction(userHomeDirProvider.getGradleUserHomeDirectory(), usedGradleVersions));
         }
         alreadyCleaned = true;
     }
@@ -87,15 +83,16 @@ public class GradleUserHomeCleanupService implements Stoppable {
     }
 
     private boolean execute(MonitoredCleanupAction action) {
-        ProgressLogger progressLogger = startNewOperation(action.getClass(), action.getDisplayName());
-        try {
-            return action.execute(new DefaultCleanupProgressMonitor(progressLogger));
-        } finally {
-            progressLogger.completed();
-        }
-    }
+        return buildOperationRunner.call(new CallableBuildOperation<Boolean>() {
+            @Override
+            public Boolean call(BuildOperationContext context) throws Exception {
+                return action.execute(new DefaultCleanupProgressMonitor(context));
+            }
 
-    private ProgressLogger startNewOperation(Class<?> loggerClass, String description) {
-        return progressLoggerFactory.newOperation(loggerClass).start(description, description);
+            @Override
+            public BuildOperationDescriptor.Builder description() {
+                return BuildOperationDescriptor.displayName(action.getDisplayName());
+            }
+        });
     }
 }

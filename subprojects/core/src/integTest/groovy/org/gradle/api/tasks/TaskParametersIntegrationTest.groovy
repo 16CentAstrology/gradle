@@ -27,11 +27,12 @@ import org.gradle.integtests.fixtures.TestBuildCache
 import org.gradle.integtests.fixtures.ToBeFixedForConfigurationCache
 import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
 import org.gradle.internal.Actions
-import org.gradle.internal.reflect.problems.ValidationProblemId
 import org.gradle.internal.reflect.validation.ValidationMessageChecker
-import org.gradle.internal.reflect.validation.ValidationTestFor
+import org.gradle.test.precondition.Requires
+import org.gradle.test.preconditions.IntegTestPreconditions
 import spock.lang.Issue
-import spock.lang.Requires
+
+import static org.gradle.integtests.fixtures.ToBeFixedForConfigurationCache.Skip.INVESTIGATE
 
 class TaskParametersIntegrationTest extends AbstractIntegrationSpec implements ValidationMessageChecker {
 
@@ -57,6 +58,7 @@ class TaskParametersIntegrationTest extends AbstractIntegrationSpec implements V
         failure.assertHasCause("Cannot fingerprint input property 'b': value 'xxx' cannot be serialized.")
     }
 
+    @ToBeFixedForConfigurationCache(skip = INVESTIGATE)
     def "deals gracefully with not serializable contents of GStrings"() {
         buildFile << """
             task foo {
@@ -90,7 +92,7 @@ class TaskParametersIntegrationTest extends AbstractIntegrationSpec implements V
                 @InputFiles FileCollection inputs1
                 @InputFiles FileCollection inputs2
 
-                @OutputDirectory File output = project.buildDir
+                @OutputDirectory File output
 
                 @TaskAction void action() {}
             }
@@ -100,6 +102,7 @@ class TaskParametersIntegrationTest extends AbstractIntegrationSpec implements V
             task test(type: TaskWithTwoFileCollectionInputs) {
                 inputs1 = files("input1.txt", "input2.txt")
                 inputs2 = files("input3.txt")
+                output = layout.buildDirectory.dir("out").get().asFile
             }
         """
 
@@ -239,8 +242,9 @@ class TaskParametersIntegrationTest extends AbstractIntegrationSpec implements V
         buildFile << """
             task a {
                 outputs.file 'a.txt'
+                def outputFile = file('a.txt')
                 doLast {
-                    file('a.txt') << "Data"
+                    outputFile << "Data"
                 }
             }
 
@@ -380,7 +384,7 @@ task someTask {
         "123"                | "123 as short"
     }
 
-    @Requires({ GradleContextualExecuter.embedded })
+    @Requires(IntegTestPreconditions.IsEmbeddedExecutor)
     // this test only works in embedded mode because of the use of validation test fixtures
     def "invalid task causes VFS to drop"() {
         buildFile << """
@@ -406,7 +410,7 @@ task someTask {
         outputContains("Invalidating VFS because task ':invalid' failed validation")
     }
 
-    @Requires({ GradleContextualExecuter.embedded })
+    @Requires(IntegTestPreconditions.IsEmbeddedExecutor)
     // this test only works in embedded mode because of the use of validation test fixtures
     def "validation warnings are displayed once"() {
         buildFile << """
@@ -432,7 +436,7 @@ task someTask {
         output.count("- Type 'InvalidTask' property 'inputFile' test problem. Reason: This is a test.") == 1
     }
 
-    @Requires({ GradleContextualExecuter.embedded })
+    @Requires(IntegTestPreconditions.IsEmbeddedExecutor)
     // this test only works in embedded mode because of the use of validation test fixtures
     def "validation warnings are reported even when task is skipped"() {
         buildFile << """
@@ -457,10 +461,6 @@ task someTask {
         skipped(":invalid")
     }
 
-    @ValidationTestFor([
-        ValidationProblemId.MUTABLE_TYPE_WITH_SETTER,
-        ValidationProblemId.INCORRECT_USE_OF_INPUT_ANNOTATION
-    ])
     def "task can use input property of type #type"() {
         file("buildSrc/src/main/java/SomeTask.java") << """
 import org.gradle.api.DefaultTask;
@@ -558,9 +558,6 @@ task someTask(type: SomeTask) {
         "${MapProperty.name}<String, Number>" | "objects.mapProperty(String, Number); v.set([a: 12])" | "objects.mapProperty(String, Number); v.set([a: 10])"        | null
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.VALUE_NOT_SET
-    )
     def "null input properties registered via TaskInputs.property are not allowed"() {
         expectReindentedValidationMessage()
         buildFile << """
@@ -586,9 +583,7 @@ task someTask(type: SomeTask) {
         succeeds "test"
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.VALUE_NOT_SET
-    )
+    @ToBeFixedForConfigurationCache(skip = INVESTIGATE)
     def "null input files registered via TaskInputs.#method are not allowed"() {
         expectReindentedValidationMessage()
         buildFile << """
@@ -620,9 +615,7 @@ task someTask(type: SomeTask) {
         method << ["file", "files", "dir"]
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.VALUE_NOT_SET
-    )
+    @ToBeFixedForConfigurationCache(skip = INVESTIGATE)
     def "null output files registered via TaskOutputs.#method are not allowed"() {
         expectReindentedValidationMessage()
         buildFile << """
@@ -654,9 +647,6 @@ task someTask(type: SomeTask) {
         method << ["file", "files", "dir", "dirs"]
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.INPUT_FILE_DOES_NOT_EXIST
-    )
     def "missing input files registered via TaskInputs.#method are not allowed"() {
         expectReindentedValidationMessage()
         buildFile << """
@@ -683,14 +673,14 @@ task someTask(type: SomeTask) {
         "dir"  | "Directory"
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.UNEXPECTED_INPUT_FILE_TYPE
-    )
     def "wrong input file type registered via TaskInputs.#method is not allowed"() {
+        enableProblemsApiCheck()
         expectReindentedValidationMessage()
         file("input-file.txt").touch()
-        file("input-dir").createDir()
-        buildFile << """
+
+        def inputDir = file("input-dir")
+        inputDir.createDir()
+        buildFile """
             task test {
                 inputs.${method}({ "$path" }) withPropertyName "input"
                 doLast {}
@@ -708,16 +698,28 @@ task someTask(type: SomeTask) {
                 .includeLink()
         })
 
+        verifyAll(receivedProblem(0)) {
+            fqid == 'validation:property-validation:unexpected-input-file-type'
+            contextualLabel == "Property \'input\' $fileType \'${unexpected.absolutePath}\' is not a $fileType"
+            details == "Expected an input to be a $fileType but it was a ${getOppositeKind(fileType)}"
+            solutions == [
+                "Use a $fileType as an input",
+                "Declare the input as a ${getOppositeKind(fileType)} instead",
+            ].collect { it.toString() }
+            additionalData.asMap == [
+                'typeName': 'org.gradle.api.DefaultTask',
+                'propertyName': 'input',
+            ]
+        }
+
         where:
         method | path             | fileType
         "file" | "input-dir"      | "file"
         "dir"  | "input-file.txt" | "directory"
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.CANNOT_WRITE_OUTPUT
-    )
     def "wrong output file type registered via TaskOutputs.#method is not allowed (files)"() {
+        enableProblemsApiCheck()
         expectReindentedValidationMessage()
         def outputDir = file("output-dir")
         outputDir.createDir()
@@ -737,16 +739,27 @@ task someTask(type: SomeTask) {
                 .includeLink()
         })
 
+        verifyAll(receivedProblem(0)) {
+            fqid == 'validation:property-validation:cannot-write-output'
+            contextualLabel == "Property \'output\' is not writable because \'${outputDir.absolutePath}\' is not a file"
+            details == 'Cannot write a file to a location pointing at a directory'
+            solutions == [
+                'Configure \'output\' to point to a file, not a directory',
+                'Annotate \'output\' with @OutputDirectory instead of @OutputFiles',
+            ]
+            additionalData.asMap == [
+                'typeName' : 'org.gradle.api.DefaultTask',
+                'propertyName' : 'output',
+            ]
+        }
         where:
         method  | path
         "file"  | "output-dir"
         "files" | "output-dir"
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.CANNOT_WRITE_OUTPUT
-    )
     def "wrong output file type registered via TaskOutputs.#method is not allowed (directories)"() {
+        enableProblemsApiCheck()
         expectReindentedValidationMessage()
         def outputFile = file("output-file.txt")
         outputFile.touch()
@@ -766,19 +779,27 @@ task someTask(type: SomeTask) {
                 .includeLink()
         })
 
+        verifyAll(receivedProblem(0)) {
+            fqid == 'validation:property-validation:cannot-write-output'
+            contextualLabel == "Property \'output\' is not writable because \'${outputFile.absolutePath}\' is not a directory"
+            details == "Expected \'${outputFile.absolutePath}\' to be a directory but it\'s a file"
+            solutions == [ 'Make sure that the \'output\' is configured to a directory' ]
+            additionalData.asMap == [
+                'typeName' : 'org.gradle.api.DefaultTask',
+                'propertyName' : 'output',
+            ]
+        }
         where:
         method | path
         "dir"  | "output-file.txt"
         "dirs" | "output-file.txt"
     }
 
-    @ValidationTestFor(
-        ValidationProblemId.CANNOT_WRITE_OUTPUT
-    )
     @Issue("https://github.com/gradle/gradle/issues/15679")
     def "fileTrees with regular file roots cannot be used as output files"() {
+        enableProblemsApiCheck()
         expectReindentedValidationMessage()
-        buildScript """
+        buildFile """
             task myTask {
                 inputs.file file('input.txt')
                 outputs.files(files('build/output.txt').asFileTree).withPropertyName('output')
@@ -800,6 +821,17 @@ task someTask(type: SomeTask) {
                 .dir(outputFile)
                 .includeLink()
         })
+
+        verifyAll(receivedProblem(0)) {
+            fqid == 'validation:property-validation:cannot-write-output'
+            contextualLabel == "Property \'output\' is not writable because \'${outputFile.absolutePath}\' is not a directory"
+            details == "Expected the root of the file tree \'${outputFile.absolutePath}\' to be a directory but it\'s a file"
+            solutions == [ 'Make sure that the root of the file tree \'output\' is configured to a directory' ]
+            additionalData.asMap == [
+                'typeName' : 'org.gradle.api.DefaultTask',
+                'propertyName' : 'output',
+            ]
+        }
     }
 
     def "can specify null as an input property in ad-hoc task"() {
@@ -984,26 +1016,26 @@ task someTask(type: SomeTask) {
         succeeds("printCounts")
         then:
         executedAndNotSkipped(':myTask')
-        outputContains("outputFileCount = 2, inputFileCount = 3, inputValueCount = 1, nestedInputCount = 4, nestedInputValueCount = 1")
+        outputContains("outputFileCount = 2, inputFileCount = 3, inputValueCount = 1, nestedInputCount = 3, nestedInputValueCount = 1")
 
         when:
         inputFile.text = "changed"
         withBuildCache().succeeds("printCounts")
         then:
         executedAndNotSkipped(':myTask')
-        outputContains("outputFileCount = 2, inputFileCount = 3, inputValueCount = 1, nestedInputCount = 4, nestedInputValueCount = 1")
+        outputContains("outputFileCount = 2, inputFileCount = 3, inputValueCount = 1, nestedInputCount = 3, nestedInputValueCount = 1")
 
         when:
         succeeds("printCounts")
         then:
         skipped(':myTask')
-        outputContains("outputFileCount = 1, inputFileCount = 2, inputValueCount = 1, nestedInputCount = 4, nestedInputValueCount = 1")
+        outputContains("outputFileCount = 1, inputFileCount = 2, inputValueCount = 1, nestedInputCount = 3, nestedInputValueCount = 1")
 
         when:
         file('build').deleteDir()
         withBuildCache().succeeds("printCounts")
         then:
         skipped(':myTask')
-        outputContains("outputFileCount = 1, inputFileCount = 2, inputValueCount = 1, nestedInputCount = 4, nestedInputValueCount = 1")
+        outputContains("outputFileCount = 1, inputFileCount = 2, inputValueCount = 1, nestedInputCount = 3, nestedInputValueCount = 1")
     }
 }

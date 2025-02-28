@@ -14,23 +14,36 @@
  * limitations under the License.
  */
 
-import gradlebuild.basics.accessors.kotlin
+import gradlebuild.basics.accessors.kotlinMainSourceSet
+import gradlebuild.basics.kotlindsl.configureKotlinCompilerForGradleBuild
 import org.gradle.api.internal.initialization.DefaultClassLoaderScope
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 
 plugins {
     kotlin("jvm")
-    id("gradlebuild.java-library")
-    id("gradlebuild.ktlint")
+    id("gradlebuild.jvm-library")
+    id("gradlebuild.detekt")
+    id("gradlebuild.private-javadoc")
 }
 
 configurations.transitiveSourcesElements {
-    val main = sourceSets.main.get()
-    main.kotlin.srcDirs.forEach {
+    (kotlinMainSourceSet.srcDirs + sourceSets.main.get().resources.srcDirs).forEach {
         outgoing.artifact(it)
+    }
+}
+
+kotlin {
+    target.compilations.named("testFixtures") {
+        associateWith(target.compilations["main"])
+    }
+    target.compilations.named("test") {
+        associateWith(target.compilations["main"])
+        associateWith(target.compilations["testFixtures"])
+    }
+    target.compilations.named("integTest") {
+        associateWith(target.compilations["main"])
+        associateWith(target.compilations["testFixtures"])
     }
 }
 
@@ -39,38 +52,11 @@ tasks {
         configureKotlinCompilerForGradleBuild()
     }
 
-    codeQuality {
-        dependsOn(ktlintCheck)
-    }
-
-    runKtlintCheckOverKotlinScripts {
-        // Only check the build files, not all *.kts files in the project
-        includes += listOf("*.gradle.kts")
-    }
-
     withType<Test>().configureEach {
-
-        shouldRunAfter(ktlintCheck)
-
         // enables stricter ClassLoaderScope behaviour
         systemProperty(
             DefaultClassLoaderScope.STRICT_MODE_PROPERTY,
             true
-        )
-    }
-}
-
-fun KotlinCompile.configureKotlinCompilerForGradleBuild() {
-    compilerOptions {
-        allWarningsAsErrors.set(true)
-        apiVersion.set(KotlinVersion.KOTLIN_1_8)
-        languageVersion.set(KotlinVersion.KOTLIN_1_8)
-        jvmTarget.set(JvmTarget.JVM_1_8)
-        freeCompilerArgs.addAll(
-            "-Xjsr305=strict",
-            "-java-parameters",
-            "-Xsam-conversions=class",
-            "-Xskip-metadata-version-check",
         )
     }
 }

@@ -15,25 +15,55 @@
  */
 package org.gradle.api.internal.artifacts.dependencies;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Sets;
+import org.gradle.api.artifacts.capability.CapabilitySelector;
 import org.gradle.api.capabilities.Capability;
+import org.gradle.api.internal.artifacts.capability.DefaultSpecificCapabilitySelector;
+import org.gradle.api.internal.artifacts.capability.DefaultFeatureCapabilitySelector;
+import org.gradle.api.internal.capabilities.ImmutableCapability;
+import org.gradle.api.model.ObjectFactory;
+import org.gradle.api.provider.Provider;
+import org.gradle.api.provider.SetProperty;
 import org.gradle.internal.typeconversion.NotationParser;
 
-import java.util.List;
-import java.util.Set;
+import javax.inject.Inject;
 
-public class DefaultMutableModuleDependencyCapabilitiesHandler implements ModuleDependencyCapabilitiesInternal {
-    private final NotationParser<Object, Capability> notationParser;
-    private final Set<Capability> requestedCapabilities = Sets.newLinkedHashSet();
+public abstract class DefaultMutableModuleDependencyCapabilitiesHandler implements ModuleDependencyCapabilitiesInternal {
 
-    public DefaultMutableModuleDependencyCapabilitiesHandler(NotationParser<Object, Capability> notationParser) {
-        this.notationParser = notationParser;
+    private final NotationParser<Object, Capability> capabilityNotationParser;
+
+    @Inject
+    public DefaultMutableModuleDependencyCapabilitiesHandler(NotationParser<Object, Capability> capabilityNotationParser) {
+        this.capabilityNotationParser = capabilityNotationParser;
     }
+
+    @Inject
+    protected abstract ObjectFactory getObjectFactory();
+
+    @Override
+    public abstract SetProperty<CapabilitySelector> getCapabilitySelectors();
 
     @Override
     public void requireCapability(Object capabilityNotation) {
-        requestedCapabilities.add(notationParser.parseNotation(capabilityNotation));
+        if (capabilityNotation instanceof Provider) {
+            getCapabilitySelectors().add(((Provider<?>) capabilityNotation).map(this::convertExact));
+        } else {
+            getCapabilitySelectors().add(convertExact(capabilityNotation));
+        }
+    }
+
+    private DefaultSpecificCapabilitySelector convertExact(Object notation) {
+        Capability capability = capabilityNotationParser.parseNotation(notation);
+        return new DefaultSpecificCapabilitySelector((ImmutableCapability) capability);
+    }
+
+    @Override
+    public void requireFeature(String featureName) {
+        getCapabilitySelectors().add(new DefaultFeatureCapabilitySelector(featureName));
+    }
+
+    @Override
+    public void requireFeature(Provider<String> featureName) {
+        getCapabilitySelectors().add(featureName.map(DefaultFeatureCapabilitySelector::new));
     }
 
     @Override
@@ -44,14 +74,11 @@ public class DefaultMutableModuleDependencyCapabilitiesHandler implements Module
     }
 
     @Override
-    public List<Capability> getRequestedCapabilities() {
-        return ImmutableList.copyOf(requestedCapabilities);
-    }
-
-    @Override
     public ModuleDependencyCapabilitiesInternal copy() {
-        DefaultMutableModuleDependencyCapabilitiesHandler out = new DefaultMutableModuleDependencyCapabilitiesHandler(notationParser);
-        out.requestedCapabilities.addAll(requestedCapabilities);
+        DefaultMutableModuleDependencyCapabilitiesHandler out = getObjectFactory().newInstance(
+            DefaultMutableModuleDependencyCapabilitiesHandler.class, capabilityNotationParser
+        );
+        out.getCapabilitySelectors().addAll(getCapabilitySelectors());
         return out;
     }
 }

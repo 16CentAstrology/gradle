@@ -17,6 +17,7 @@
 package gradlebuild.binarycompatibility
 
 import gradlebuild.binarycompatibility.filters.AnonymousClassesFilter
+import gradlebuild.binarycompatibility.filters.BridgeForBytecodeUpgradeAdapterClassFilter
 import gradlebuild.binarycompatibility.filters.KotlinInternalFilter
 import gradlebuild.binarycompatibility.rules.AcceptedRegressionsRulePostProcess
 import gradlebuild.binarycompatibility.rules.AcceptedRegressionsRuleSetup
@@ -30,6 +31,8 @@ import gradlebuild.binarycompatibility.rules.NewIncubatingAPIRule
 import gradlebuild.binarycompatibility.rules.NullabilityBreakingChangesRule
 import gradlebuild.binarycompatibility.rules.SinceAnnotationMissingRule
 import gradlebuild.binarycompatibility.rules.SinceAnnotationMissingRuleCurrentGradleVersionSetup
+import gradlebuild.binarycompatibility.rules.UpgradePropertiesRulePostProcess
+import gradlebuild.binarycompatibility.rules.UpgradePropertiesRuleSetup
 import japicmp.model.JApiChangeStatus
 import org.gradle.api.file.Directory
 import org.gradle.api.file.FileCollection
@@ -40,67 +43,68 @@ class BinaryCompatibilityHelper {
         AcceptedApiChanges acceptedViolations,
         FileCollection sourceRoots,
         String currentVersion,
-        File apiChangesJsonFile,
-        Directory projectRootDir
+        File mainApiChangesJsonFile,
+        Directory projectRootDir,
+        File currentUpgradedPropertiesFile,
+        File baselineUpgradedPropertiesFile
     ) {
         japicmpTask.tap {
-            doNotTrackState("classloading issues with rules")
-
             addExcludeFilter(AnonymousClassesFilter)
             addExcludeFilter(KotlinInternalFilter)
+            addExcludeFilter(BridgeForBytecodeUpgradeAdapterClassFilter)
 
             def acceptedChangesMap = acceptedViolations.toAcceptedChangesMap()
 
-            def apiChangesJsonFilePath = apiChangesJsonFile.path
+            def mainApiChangesJsonFilePath = mainApiChangesJsonFile.path
             def projectRootDirPath = projectRootDir.asFile.path
 
             richReport.get().tap {
                 addRule(IncubatingInternalInterfaceAddedRule, [
                     acceptedApiChanges: acceptedChangesMap,
                     publicApiPatterns: includedClasses.get(),
-                    apiChangesJsonFile: apiChangesJsonFilePath,
+                    mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                     projectRootDir: projectRootDirPath
                 ])
                 addRule(MethodsRemovedInInternalSuperClassRule, [
                     acceptedApiChanges: acceptedChangesMap,
                     publicApiPatterns: includedClasses.get(),
-                    apiChangesJsonFile: apiChangesJsonFilePath,
+                    mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                     projectRootDir: projectRootDirPath
                 ])
                 addRule(BinaryBreakingSuperclassChangeRule, [
                     acceptedApiChanges: acceptedChangesMap,
                     publicApiPatterns: includedClasses.get(),
-                    apiChangesJsonFile: apiChangesJsonFilePath,
+                    mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                     projectRootDir: projectRootDirPath
                 ])
                 addRule(BinaryBreakingChangesRule, [
                         acceptedApiChanges: acceptedChangesMap,
-                        apiChangesJsonFile: apiChangesJsonFilePath,
+                        mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                         projectRootDir: projectRootDirPath
                 ])
                 addRule(NullabilityBreakingChangesRule, [
                         acceptedApiChanges: acceptedChangesMap,
-                        apiChangesJsonFile: apiChangesJsonFilePath,
+                        mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                         projectRootDir: projectRootDirPath
                 ])
                 addRule(KotlinModifiersBreakingChangeRule, [
                         acceptedApiChanges: acceptedChangesMap,
-                        apiChangesJsonFile: apiChangesJsonFilePath,
+                        mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                         projectRootDir: projectRootDirPath
                 ])
                 addRule(JApiChangeStatus.NEW, IncubatingMissingRule, [
                         acceptedApiChanges: acceptedChangesMap,
-                        apiChangesJsonFile: apiChangesJsonFilePath,
+                        mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                         projectRootDir: projectRootDirPath
                 ])
                 addRule(JApiChangeStatus.NEW, SinceAnnotationMissingRule, [
                         acceptedApiChanges: acceptedChangesMap,
-                        apiChangesJsonFile: apiChangesJsonFilePath,
+                        mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                         projectRootDir: projectRootDirPath
                 ])
                 addRule(JApiChangeStatus.NEW, NewIncubatingAPIRule, [
                         acceptedApiChanges: acceptedChangesMap,
-                        apiChangesJsonFile: apiChangesJsonFilePath,
+                        mainApiChangesJsonFile: mainApiChangesJsonFilePath,
                         projectRootDir: projectRootDirPath
                 ])
 
@@ -110,9 +114,14 @@ class BinaryCompatibilityHelper {
                     (BinaryCompatibilityRepositorySetupRule.Params.sourceRoots): sourceRoots.collect { it.absolutePath } as Set,
                     (BinaryCompatibilityRepositorySetupRule.Params.sourceCompilationClasspath): newClasspath.collect { it.absolutePath } as Set
                 ])
+                addSetupRule(UpgradePropertiesRuleSetup, [
+                    currentUpgradedProperties: currentUpgradedPropertiesFile.absolutePath,
+                    baselineUpgradedProperties: baselineUpgradedPropertiesFile.absolutePath
+                ])
 
                 addPostProcessRule(AcceptedRegressionsRulePostProcess)
                 addPostProcessRule(BinaryCompatibilityRepositoryPostProcessRule)
+                addPostProcessRule(UpgradePropertiesRulePostProcess)
             }
         }
     }

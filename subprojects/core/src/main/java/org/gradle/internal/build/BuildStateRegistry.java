@@ -19,8 +19,10 @@ package org.gradle.internal.build;
 import org.gradle.api.artifacts.component.BuildIdentifier;
 import org.gradle.api.internal.BuildDefinition;
 import org.gradle.internal.buildtree.NestedBuildTree;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.scopeids.id.BuildInvocationScopeId;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
+import org.gradle.util.Path;
 
 import javax.annotation.Nullable;
 import java.util.Collection;
@@ -29,7 +31,7 @@ import java.util.function.Consumer;
 /**
  * A registry of all the builds present in a build tree.
  */
-@ServiceScope(Scopes.BuildTree.class)
+@ServiceScope(Scope.BuildTree.class)
 public interface BuildStateRegistry {
     /**
      * Creates the root build.
@@ -64,6 +66,12 @@ public interface BuildStateRegistry {
     BuildState getBuild(BuildIdentifier buildIdentifier) throws IllegalArgumentException;
 
     /**
+     * Finds a build. Returns null if there's no build with the given identifier.
+     */
+    @Nullable
+    BuildState findBuild(BuildIdentifier buildIdentifier);
+
+    /**
      * Notification that the settings have been loaded for the root build.
      *
      * <p>This shouldn't be on this interface, as this is state for the root build that should be managed internally by the {@link RootBuildState} instance instead. This method is here to allow transition towards that structure.
@@ -71,9 +79,21 @@ public interface BuildStateRegistry {
     void finalizeIncludedBuilds();
 
     /**
+     * Notifies the registry about root build inclusion.
+     */
+    default void onRootBuildInclude(RootBuildState rootBuild, BuildState referrer, boolean asPluginBuild) {}
+
+    /**
      * Creates an included build. An included build is-a nested build whose projects and outputs are treated as part of the composite build.
      */
-    IncludedBuildState addIncludedBuild(BuildDefinition buildDefinition);
+    IncludedBuildState addIncludedBuild(BuildDefinition buildDefinition, BuildState referrer);
+
+    /**
+     * Creates an included build. An included build is-a nested build whose projects and outputs are treated as part of the composite build.
+     *
+     * This is used when loaded from the Configuration Cache when the path of the build is already known.
+     */
+    IncludedBuildState addIncludedBuild(BuildDefinition buildDefinition, Path buildPath);
 
     /**
      * Creates an implicit included build. An implicit build is-a nested build that is managed by Gradle and whose outputs are used by dependency resolution.
@@ -89,15 +109,10 @@ public interface BuildStateRegistry {
     /**
      * Creates a new standalone nested build tree.
      */
-    NestedBuildTree addNestedBuildTree(BuildDefinition buildDefinition, BuildState owner, @Nullable String buildName);
+    NestedBuildTree addNestedBuildTree(BuildInvocationScopeId buildInvocationScopeId, BuildDefinition buildDefinition, BuildState owner, @Nullable String buildName);
 
     /**
      * Visits all registered builds, ordered by {@link BuildState#getIdentityPath()}
      */
     void visitBuilds(Consumer<? super BuildState> visitor);
-
-    /**
-     * Restarts each build in the tree.
-     */
-    void resetStateForAllBuilds();
 }

@@ -17,7 +17,6 @@
 package org.gradle.api.internal.plugins;
 
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import org.gradle.api.Action;
 import org.gradle.api.DomainObjectSet;
 import org.gradle.api.Plugin;
@@ -30,12 +29,14 @@ import org.gradle.api.plugins.PluginInstantiationException;
 import org.gradle.api.plugins.UnknownPluginException;
 import org.gradle.api.reflect.ObjectInstantiationException;
 import org.gradle.configuration.ConfigurationTargetIdentifier;
-import org.gradle.configuration.internal.UserCodeApplicationContext;
-import org.gradle.configuration.internal.UserCodeApplicationId;
 import org.gradle.internal.Cast;
+import org.gradle.internal.code.DefaultUserCodeSource;
+import org.gradle.internal.code.UserCodeApplicationContext;
+import org.gradle.internal.code.UserCodeApplicationId;
+import org.gradle.internal.code.UserCodeSource;
 import org.gradle.internal.operations.BuildOperationContext;
 import org.gradle.internal.operations.BuildOperationDescriptor;
-import org.gradle.internal.operations.BuildOperationExecutor;
+import org.gradle.internal.operations.BuildOperationRunner;
 import org.gradle.internal.operations.RunnableBuildOperation;
 import org.gradle.internal.operations.trace.CustomOperationTraceSerialization;
 import org.gradle.internal.reflect.Instantiator;
@@ -45,6 +46,7 @@ import org.gradle.plugin.use.internal.DefaultPluginId;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -58,21 +60,21 @@ public class DefaultPluginManager implements PluginManagerInternal {
     private final PluginTarget target;
     private final PluginRegistry pluginRegistry;
     private final DefaultPluginContainer pluginContainer;
-    private final Map<Class<?>, PluginImplementation<?>> plugins = Maps.newHashMap();
-    private final Map<Class<?>, Plugin> instances = Maps.newLinkedHashMap();
-    private final Map<PluginId, DomainObjectSet<PluginWithId>> idMappings = Maps.newHashMap();
+    private final Map<Class<?>, PluginImplementation<?>> plugins = new HashMap<>();
+    private final Map<Class<?>, Plugin> instances = new LinkedHashMap<>();
+    private final Map<PluginId, DomainObjectSet<PluginWithId>> idMappings = new HashMap<>();
 
-    private final BuildOperationExecutor buildOperationExecutor;
+    private final BuildOperationRunner buildOperationRunner;
     private final UserCodeApplicationContext userCodeApplicationContext;
-    private DomainObjectCollectionFactory domainObjectCollectionFactory;
+    private final DomainObjectCollectionFactory domainObjectCollectionFactory;
 
-    public DefaultPluginManager(final PluginRegistry pluginRegistry, Instantiator instantiator, final PluginTarget target, BuildOperationExecutor buildOperationExecutor, UserCodeApplicationContext userCodeApplicationContext, CollectionCallbackActionDecorator callbackDecorator, DomainObjectCollectionFactory domainObjectCollectionFactory) {
+    public DefaultPluginManager(final PluginRegistry pluginRegistry, Instantiator instantiator, final PluginTarget target, BuildOperationRunner buildOperationRunner, UserCodeApplicationContext userCodeApplicationContext, CollectionCallbackActionDecorator callbackDecorator, DomainObjectCollectionFactory domainObjectCollectionFactory) {
         this.instantiator = instantiator;
         this.target = target;
         this.pluginRegistry = pluginRegistry;
         this.domainObjectCollectionFactory = domainObjectCollectionFactory;
         this.pluginContainer = new DefaultPluginContainer(pluginRegistry, this, callbackDecorator);
-        this.buildOperationExecutor = buildOperationExecutor;
+        this.buildOperationRunner = buildOperationRunner;
         this.userCodeApplicationContext = userCodeApplicationContext;
     }
 
@@ -163,8 +165,9 @@ public class DefaultPluginManager implements PluginManagerInternal {
             } else {
                 final Runnable adder = addPluginInternal(plugin);
                 if (adder != null) {
-                    userCodeApplicationContext.apply(plugin.getDisplayName(), userCodeApplicationId ->
-                        buildOperationExecutor.run(new AddPluginBuildOperation(adder, plugin, pluginIdStr, pluginClass, userCodeApplicationId)));
+                    UserCodeSource source = new DefaultUserCodeSource(plugin.getDisplayName(), pluginIdStr);
+                    userCodeApplicationContext.apply(source, userCodeApplicationId ->
+                        buildOperationRunner.run(new AddPluginBuildOperation(adder, plugin, pluginIdStr, pluginClass, userCodeApplicationId)));
                 }
             }
         } catch (PluginApplicationException e) {
@@ -302,7 +305,7 @@ public class DefaultPluginManager implements PluginManagerInternal {
         }
     }
 
-    private static class OperationDetails implements ApplyPluginBuildOperationType.Details, CustomOperationTraceSerialization {
+    public static class OperationDetails implements ApplyPluginBuildOperationType.Details, CustomOperationTraceSerialization {
 
         private final PluginImplementation<?> pluginImplementation;
         private final ConfigurationTargetIdentifier targetIdentifier;
@@ -363,4 +366,3 @@ public class DefaultPluginManager implements PluginManagerInternal {
     private static final ApplyPluginBuildOperationType.Result OPERATION_RESULT = new ApplyPluginBuildOperationType.Result() {
     };
 }
-

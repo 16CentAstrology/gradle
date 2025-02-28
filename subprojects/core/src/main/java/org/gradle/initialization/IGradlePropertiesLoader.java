@@ -15,10 +15,13 @@
  */
 package org.gradle.initialization;
 
-import org.gradle.api.internal.properties.GradleProperties;
+import org.gradle.initialization.properties.MutableGradleProperties;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
 
 import java.io.File;
 
+@ServiceScope(Scope.Build.class)
 public interface IGradlePropertiesLoader {
 
     String SYSTEM_PROJECT_PROPERTIES_PREFIX = "org.gradle.project.";
@@ -26,9 +29,9 @@ public interface IGradlePropertiesLoader {
     String ENV_PROJECT_PROPERTIES_PREFIX = "ORG_GRADLE_PROJECT_";
 
     /**
-     * Loads the immutable set of Gradle properties.
+     * Loads the set of Gradle properties.
      *
      * @since 6.2
      */
-    GradleProperties loadGradleProperties(File rootDir);
+    MutableGradleProperties loadGradleProperties(File rootDir);
 }

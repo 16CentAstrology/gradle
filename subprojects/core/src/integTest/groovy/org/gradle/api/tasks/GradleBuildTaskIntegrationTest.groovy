@@ -19,6 +19,7 @@ package org.gradle.api.tasks
 import org.gradle.initialization.RunNestedBuildBuildOperationType
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
 import org.gradle.integtests.fixtures.BuildOperationsFixture
+import org.gradle.integtests.fixtures.ToBeFixedForIsolatedProjects
 import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
 import org.gradle.test.fixtures.server.http.BlockingHttpServer
 import org.junit.Rule
@@ -66,8 +67,8 @@ class GradleBuildTaskIntegrationTest extends AbstractIntegrationSpec {
 
     def "fails when build path is not unique"() {
         given:
-        settingsFile << "rootProject.name = 'parent'"
-        buildFile << """
+        settingsFile "rootProject.name = 'parent'"
+        buildFile """
             task b1(type:GradleBuild) {
                 tasks = ["t"]
                 buildName = 'bp'
@@ -75,6 +76,7 @@ class GradleBuildTaskIntegrationTest extends AbstractIntegrationSpec {
             task b2(type:GradleBuild) {
                 tasks = ["t"]
                 buildName = 'bp'
+                mustRunAfter ":b1"
             }
             task t
         """
@@ -100,6 +102,7 @@ class GradleBuildTaskIntegrationTest extends AbstractIntegrationSpec {
             println "other build file"
         '''
 
+        executer.expectDocumentedDeprecationWarning("The GradleBuild.buildFile property has been deprecated. This is scheduled to be removed in Gradle 9.0. Setting custom build file to select the root of the nested build has been deprecated. Please use the dir property instead. Consult the upgrading guide for further information: https://docs.gradle.org/current/userguide/upgrading_version_8.html#configuring_custom_build_layout")
         executer.expectDocumentedDeprecationWarning("Specifying custom build file location has been deprecated. This is scheduled to be removed in Gradle 9.0. Consult the upgrading guide for further information: https://docs.gradle.org/current/userguide/upgrading_version_7.html#configuring_custom_build_layout");
 
         when:
@@ -214,6 +217,7 @@ class GradleBuildTaskIntegrationTest extends AbstractIntegrationSpec {
                 tasks = ['resolve']
             }
         """
+        createDirs("other", "other/a", "other/b")
         file("other/settings.gradle") << """
             include 'a', 'b'
         """
@@ -237,6 +241,7 @@ class GradleBuildTaskIntegrationTest extends AbstractIntegrationSpec {
     @Rule
     BlockingHttpServer barrier = new BlockingHttpServer()
 
+    @ToBeFixedForIsolatedProjects(because = "subprojects")
     def "can run multiple GradleBuild tasks concurrently"() {
         barrier.start()
 
@@ -245,7 +250,7 @@ class GradleBuildTaskIntegrationTest extends AbstractIntegrationSpec {
         /**
          * Setup a build where a `GradleBuild` task while another `GradleBuild` is currently running another build but has not yet finished running the settings file for that build.
          */
-
+        createDirs("1", "2")
         settingsFile << """
             rootProject.name = 'root'
             include '1', '2'

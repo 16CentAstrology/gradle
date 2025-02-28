@@ -19,7 +19,9 @@ package org.gradle.api.internal.catalog.problems
 import groovy.transform.CompileStatic
 import org.gradle.api.internal.DocumentationRegistry
 
-import static org.gradle.problems.internal.RenderingUtils.oxfordListOf
+import static org.gradle.api.internal.catalog.DefaultVersionCatalogBuilder.getExcludedNames
+import static org.gradle.internal.RenderingUtils.quotedOxfordListOf
+import static org.gradle.util.internal.TextUtil.getPluralEnding
 import static org.gradle.util.internal.TextUtil.normaliseLineSeparators
 
 @CompileStatic
@@ -81,23 +83,23 @@ trait VersionCatalogErrorMessages {
         buildMessage(MissingCatalogFile, VersionCatalogProblemId.CATALOG_FILE_DOES_NOT_EXIST, spec)
     }
 
-    String parseError(@DelegatesTo(value=ParseError, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
+    String parseError(@DelegatesTo(value = ParseError, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
         buildMessage(ParseError, VersionCatalogProblemId.TOML_SYNTAX_ERROR, spec)
     }
 
-    String noImportFiles(@DelegatesTo(value=NoImportFiles, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
+    String noImportFiles(@DelegatesTo(value = NoImportFiles, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
         buildMessage(NoImportFiles, VersionCatalogProblemId.NO_IMPORT_FILES, spec)
     }
 
-    String tooManyImportFiles(@DelegatesTo(value=NoImportFiles, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
+    String tooManyImportFiles(@DelegatesTo(value = NoImportFiles, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
         buildMessage(TooManyImportFiles, VersionCatalogProblemId.TOO_MANY_IMPORT_FILES, spec)
     }
 
-    String tooManyImportInvokation(@DelegatesTo(value=TooManyFromInvokation, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
+    String tooManyImportInvokation(@DelegatesTo(value = TooManyFromInvokation, strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
         buildMessage(TooManyFromInvokation, VersionCatalogProblemId.TOO_MANY_IMPORT_INVOCATION, spec)
     }
 
-    private static <T extends InCatalog<T>> String buildMessage(Class<T> clazz, VersionCatalogProblemId id, Closure<?> spec) {
+    private static <T extends InCatalog<T>> String buildMessage(Class<T> clazz, VersionCatalogProblemId id, @DelegatesTo(strategy = Closure.DELEGATE_FIRST) Closure<?> spec) {
         def desc = clazz.newInstance()
         desc.section = id.name().toLowerCase()
         spec.delegate = desc
@@ -125,7 +127,7 @@ trait VersionCatalogErrorMessages {
         }
 
         String getDocumentation() {
-            "Please refer to ${doc.getDocumentationFor("version_catalog_problems", section)} for more details about this problem."
+            doc.getDocumentationRecommendationFor("information", "version_catalog_problems", section)
         }
 
         abstract String build()
@@ -147,7 +149,7 @@ trait VersionCatalogErrorMessages {
 
         @Override
         String build() {
-            """${intro}  - Problem: In version catalog $catalog, parsing failed with ${errors.size()} error${errors.size() > 1 ? "s" : ""}.
+            """${intro}  - Problem: In version catalog $catalog, parsing failed with ${errors.size()} error${getPluralEnding(errors)}.
 
     Reason: ${errors.join('\n    ')}.
 
@@ -239,23 +241,22 @@ trait VersionCatalogErrorMessages {
         }
 
         ReservedAlias shouldNotContain(String name) {
-            this.alias = name
-            this.message = "Alias '$name' contains a reserved name in Gradle and prevents generation of accessors"
+            this.alias(name)
             this
         }
 
         ReservedAlias reservedAliasPrefix(String... suffixes) {
-            this.solution = "Use a different alias which prefix is not equal to ${oxfordListOf(suffixes as List, 'or')}"
+            this.solution = "Use a different alias which prefix is not equal to ${quotedOxfordListOf(suffixes as List, 'or')}"
             this
         }
 
         ReservedAlias reservedAliases(String... aliases) {
-            this.solution = "Use a different alias which isn't in the reserved names ${oxfordListOf(aliases as List, "or")}"
-            this
+            this.solution = "Use a different alias which isn't in the reserved names ${quotedOxfordListOf(aliases as List, "or")}"
+            this.reservedNames(aliases)
         }
 
         ReservedAlias reservedNames(String... names) {
-            this.solution = "Use a different alias which doesn't contain any of ${oxfordListOf(names as List, "or")}"
+            this.solution = "Use a different alias which doesn't contain ${getExcludedNames(names as List)}"
             this
         }
 
@@ -304,7 +305,7 @@ trait VersionCatalogErrorMessages {
 
     Possible solutions:
       1. Declare '${versionRef}' in the catalog.
-      2. Use one of the following existing versions: ${oxfordListOf(existingVersionRefs, 'or')}.
+      2. Use one of the following existing versions: ${quotedOxfordListOf(existingVersionRefs, 'or')}.
 
     ${documentation}"""
         }

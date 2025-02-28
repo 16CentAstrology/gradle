@@ -31,6 +31,7 @@ import org.gradle.internal.build.BuildStateRegistry
 import org.gradle.internal.build.IncludedBuildState
 import org.gradle.internal.build.RootBuildState
 import org.gradle.util.Path
+import org.gradle.util.TestUtil
 import spock.lang.Specification
 
 import java.util.function.Consumer
@@ -38,7 +39,12 @@ import java.util.function.Consumer
 class DefaultBuildTaskSelectorTest extends Specification {
     def buildRegistry = Mock(BuildStateRegistry)
     def taskSelector = Mock(TaskSelector)
-    def selector = new DefaultBuildTaskSelector(buildRegistry, taskSelector, [new HelpBuiltInCommand()])
+    def selector = new DefaultBuildTaskSelector(
+        buildRegistry,
+        taskSelector,
+        [new HelpBuiltInCommand()],
+        TestUtil.problemsService()
+    )
     def root = rootBuild()
     def target = root.state
 
@@ -274,7 +280,7 @@ class DefaultBuildTaskSelectorTest extends Specification {
         def defaultProjectState = Mock(ProjectState)
         def rootProjectState = Mock(ProjectState)
 
-        build.projectsLoaded >> true
+        build.projectsCreated >> true
         build.mutableModel >> gradle
         gradle.defaultProject >> defaultProject
         defaultProject.owner >> defaultProjectState
@@ -292,12 +298,14 @@ class DefaultBuildTaskSelectorTest extends Specification {
 
         build.projects >> projects
         projects.rootProject >> rootProjectState
+        projects.allProjects >> [rootProjectState]
         rootProjectState.name >> "root"
         rootProjectState.displayName >> Describables.of("<root project>")
         rootProjectState.projectPath >> Path.ROOT
         rootProjectState.identityPath >> Path.ROOT
         rootProjectState.owner >> build
         rootProjectState.childProjects >> rootChildProjects
+        rootProjectState.created >> true
 
         return new RootBuildFixture(build, rootProjectState, rootChildProjects, defaultProjectState)
     }

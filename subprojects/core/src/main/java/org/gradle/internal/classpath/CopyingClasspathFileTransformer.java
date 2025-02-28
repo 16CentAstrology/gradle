@@ -51,4 +51,9 @@ public class CopyingClasspathFileTransformer implements ClasspathFileTransformer
         }
         return cachedFile;
     }
+
+    @Override
+    public ClasspathFileHasher getFileHasher() {
+        return FileSystemLocationSnapshot::getHash;
+    }
 }

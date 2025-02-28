@@ -8,14 +8,16 @@ description = "Provides a plugin for configuring japicmp-gradle-plugin to detect
 dependencies {
     api("me.champeau.gradle:japicmp-gradle-plugin")
 
-    implementation(project(":basics"))
-    implementation(project(":module-identity"))
+    implementation("gradlebuild:basics")
+    implementation("gradlebuild:module-identity")
 
+    implementation("com.github.javaparser:javaparser-core")
     implementation("com.google.code.gson:gson")
     implementation("com.google.guava:guava")
     implementation("org.javassist:javassist")
-    implementation("com.github.javaparser:javaparser-core")
     implementation("org.jetbrains.kotlinx:kotlinx-metadata-jvm")
+    implementation("org.jspecify:jspecify")
+    implementation("org.ow2.asm:asm")
     implementation(kotlin("compiler-embeddable"))
 
     testImplementation("org.jsoup:jsoup")

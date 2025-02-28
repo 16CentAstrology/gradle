@@ -20,6 +20,8 @@ import org.gradle.StartParameter;
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.UnknownProjectException;
+import org.gradle.api.cache.CacheConfigurations;
+import org.gradle.api.file.BuildLayout;
 import org.gradle.api.initialization.dsl.ScriptHandler;
 import org.gradle.api.initialization.resolve.DependencyResolutionManagement;
 import org.gradle.api.invocation.Gradle;
@@ -28,8 +30,10 @@ import org.gradle.api.plugins.PluginAware;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.toolchain.management.ToolchainManagement;
-import org.gradle.api.cache.CacheConfigurations;
 import org.gradle.caching.configuration.BuildCacheConfiguration;
+import org.gradle.declarative.dsl.model.annotations.Adding;
+import org.gradle.declarative.dsl.model.annotations.Configuring;
+import org.gradle.declarative.dsl.model.annotations.Restricted;
 import org.gradle.internal.HasInternalProtocol;
 import org.gradle.plugin.management.PluginManagementSpec;
 import org.gradle.vcs.SourceControl;
@@ -46,7 +50,7 @@ import java.util.Arrays;
  * #DEFAULT_SETTINGS_FILE}</code> settings file. Before Gradle assembles the projects for a build, it creates a
  * <code>Settings</code> instance and executes the settings file against it.</p>
  *
- * <h3>Assembling a Multi-Project Build</h3>
+ * <h2>Assembling a Multi-Project Build</h2>
  *
  * <p>One of the purposes of the <code>Settings</code> object is to allow you to declare the projects which are to be
  * included in the build. You add projects to the build using the {@link #include(String...)} method.  There is always a
@@ -57,9 +61,9 @@ import java.util.Arrays;
  * <p>When a project is included in the build, a {@link ProjectDescriptor} is created. You can use this descriptor to
  * change the default values for several properties of the project.</p>
  *
- * <h3>Using Settings in a Settings File</h3>
+ * <h2>Using Settings in a Settings File</h2>
  *
- * <h4>Dynamic Properties</h4>
+ * <h3>Dynamic Properties</h3>
  *
  * <p>In addition to the properties of this interface, the {@code Settings} object makes some additional read-only
  * properties available to the settings script. This includes properties from the following sources:</p>
@@ -197,6 +201,14 @@ public interface Settings extends PluginAware, ExtensionAware {
     Settings getSettings();
 
     /**
+     * Provides access to important locations for a Gradle build.
+     *
+     * @since 8.5
+     */
+    @Incubating
+    BuildLayout getLayout();
+
+    /**
      * Returns the build script handler for settings. You can use this handler to query details about the build
      * script for settings, and manage the classpath used to compile and execute the settings script.
      *
@@ -226,6 +238,7 @@ public interface Settings extends PluginAware, ExtensionAware {
      *
      * @return The root project. Never returns null.
      */
+    @Restricted
     ProjectDescriptor getRootProject();
 
     /**
@@ -321,6 +334,7 @@ public interface Settings extends PluginAware, ExtensionAware {
      *
      * @since 3.5
      */
+    @Configuring
     void pluginManagement(Action<? super PluginManagementSpec> pluginManagementSpec);
 
     /**
@@ -351,6 +365,7 @@ public interface Settings extends PluginAware, ExtensionAware {
      *
      * @since 4.6
      */
+    @Adding
     void enableFeaturePreview(String name);
 
     /**
@@ -359,6 +374,7 @@ public interface Settings extends PluginAware, ExtensionAware {
      *
      * @since 6.8
      */
+    @Configuring
     void dependencyResolutionManagement(Action<? super DependencyResolutionManagement> dependencyResolutionConfiguration);
 
     /**
@@ -401,4 +417,26 @@ public interface Settings extends PluginAware, ExtensionAware {
      */
     @Incubating
     void caches(Action<? super CacheConfigurations> cachesConfiguration);
+
+    /**
+     * Returns the model defaults object for this build.
+     *
+     * This is an experimental feature.
+     *
+     * @since 8.10
+     */
+    @Incubating
+    SharedModelDefaults getDefaults();
+
+    /**
+     * Configures the model defaults for this build.
+     *
+     * This is an experimental feature.
+     *
+     * @param action the configuration to apply
+     *
+     * @since 8.10
+     */
+    @Incubating
+    void defaults(Action<? super SharedModelDefaults> action);
 }

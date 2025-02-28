@@ -19,12 +19,12 @@ plugins {
     id("groovy-gradle-plugin")
     id("gradlebuild.code-quality")
     id("gradlebuild.ci-reporting")
+    id("gradlebuild.test-retry")
+    id("gradlebuild.private-javadoc")
 }
 
-java.configureJavaToolChain()
-
 dependencies {
-    api(platform(project(":build-platform")))
+    api(platform("gradlebuild:build-platform"))
     implementation("gradlebuild:gradle-plugin")
 
     implementation(localGroovy())
@@ -46,11 +46,23 @@ tasks.withType<GroovyCompile>().configureEach {
 }
 
 tasks.withType<Test>().configureEach {
-    if (JavaVersion.current().isJava9Compatible) {
+    val testVersionProvider = javaLauncher.map { it.metadata.languageVersion }
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
         //allow ProjectBuilder to inject legacy types into the system classloader
-        jvmArgs("--add-opens", "java.base/java.lang=ALL-UNNAMED")
-        jvmArgs("--illegal-access=deny")
-    }
+        if (testVersionProvider.get().canCompileOrRun(9)) {
+            listOf("--add-opens", "java.base/java.lang=ALL-UNNAMED")
+        } else {
+            emptyList()
+        }
+    })
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        val testVersion = testVersionProvider.get()
+        if (testVersion.canCompileOrRun(9) && !testVersion.canCompileOrRun(17)) {
+            listOf("--illegal-access=deny")
+        } else {
+            emptyList()
+        }
+    })
     useJUnitPlatform()
 }
 

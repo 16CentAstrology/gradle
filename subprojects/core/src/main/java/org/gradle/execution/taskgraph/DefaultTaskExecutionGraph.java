@@ -42,8 +42,8 @@ import org.gradle.internal.build.ExecutionResult;
 import org.gradle.internal.event.ListenerBroadcast;
 import org.gradle.internal.operations.BuildOperationContext;
 import org.gradle.internal.operations.BuildOperationDescriptor;
-import org.gradle.internal.operations.BuildOperationExecutor;
 import org.gradle.internal.operations.BuildOperationRef;
+import org.gradle.internal.operations.BuildOperationRunner;
 import org.gradle.internal.operations.CurrentBuildOperationRef;
 import org.gradle.internal.operations.RunnableBuildOperation;
 import org.gradle.internal.service.ServiceRegistry;
@@ -56,7 +56,7 @@ import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 @SuppressWarnings("deprecation")
 @NonNullApi
@@ -70,7 +70,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
     private final ListenerBroadcast<org.gradle.api.execution.TaskExecutionListener> taskListeners;
     private final BuildScopeListenerRegistrationListener buildScopeListenerRegistrationListener;
     private final ServiceRegistry globalServices;
-    private final BuildOperationExecutor buildOperationExecutor;
+    private final BuildOperationRunner buildOperationRunner;
     private final ListenerBuildOperationDecorator listenerBuildOperationDecorator;
     private FinalizedExecutionPlan executionPlan;
     private List<Task> allTasks = Collections.emptyList();
@@ -79,7 +79,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
     public DefaultTaskExecutionGraph(
         PlanExecutor planExecutor,
         List<NodeExecutor> nodeExecutors,
-        BuildOperationExecutor buildOperationExecutor,
+        BuildOperationRunner buildOperationRunner,
         ListenerBuildOperationDecorator listenerBuildOperationDecorator,
         GradleInternal gradleInternal,
         ListenerBroadcast<TaskExecutionGraphListener> graphListeners,
@@ -89,7 +89,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
     ) {
         this.planExecutor = planExecutor;
         this.nodeExecutors = nodeExecutors;
-        this.buildOperationExecutor = buildOperationExecutor;
+        this.buildOperationRunner = buildOperationRunner;
         this.listenerBuildOperationDecorator = listenerBuildOperationDecorator;
         this.gradleInternal = gradleInternal;
         this.graphListeners = graphListeners;
@@ -138,7 +138,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
         return planExecutor.process(
             executionPlan.asWorkSource(),
             new BuildOperationAwareExecutionAction(
-                buildOperationExecutor.getCurrentOperation(),
+                buildOperationRunner.getCurrentOperation(),
                 new InvokeNodeExecutorsAction(nodeExecutors, projectExecutionServices)
             )
         );
@@ -272,7 +272,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
     }
 
     @Override
-    public void visitScheduledNodes(Consumer<List<Node>> visitor) {
+    public void visitScheduledNodes(BiConsumer<List<Node>, Set<Node>> visitor) {
         executionPlan.getContents().getScheduledNodes().visitNodes(visitor);
     }
 
@@ -311,13 +311,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
 
         @Override
         public void execute(Node node) {
-            BuildOperationRef previous = CurrentBuildOperationRef.instance().get();
-            CurrentBuildOperationRef.instance().set(parentOperation);
-            try {
-                delegate.execute(node);
-            } finally {
-                CurrentBuildOperationRef.instance().set(previous);
-            }
+            CurrentBuildOperationRef.instance().with(parentOperation, () -> delegate.execute(node));
         }
     }
 
@@ -358,7 +352,7 @@ public class DefaultTaskExecutionGraph implements TaskExecutionGraphInternal {
     private void fireWhenReady() {
         // We know that we're running single-threaded here, so we can use coarse grained project locks
         gradleInternal.getOwner().getProjects().withMutableStateOfAllProjects(
-            () -> buildOperationExecutor.run(
+            () -> buildOperationRunner.run(
                 new NotifyTaskGraphWhenReady(DefaultTaskExecutionGraph.this, graphListeners.getSource(), gradleInternal)
             )
         );

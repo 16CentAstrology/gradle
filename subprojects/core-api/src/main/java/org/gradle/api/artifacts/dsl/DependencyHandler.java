@@ -17,6 +17,7 @@ package org.gradle.api.artifacts.dsl;
 
 import groovy.lang.Closure;
 import org.gradle.api.Action;
+import org.gradle.api.artifacts.ArtifactView;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.artifacts.ExternalModuleDependency;
 import org.gradle.api.artifacts.MinimalExternalModuleDependency;
@@ -120,19 +121,21 @@ import java.util.Map;
  *
  * <pre class='autoTested'>
  * plugins {
- *     id 'java' // so that I can declare 'implementation' dependencies
+ *     id("java-library")
  * }
  *
  * dependencies {
- *   //configuring dependency to specific configuration of the module
- *   implementation configuration: 'someConf', group: 'org.someOrg', name: 'someModule', version: '1.0'
+ *   // Configuring dependency to specific configuration of the module
+ *   // This notation should _only_ be used for Ivy dependencies
+ *   implementation(group: "org.someOrg", name: "someModule", version: "1.0", configuration: "someConf")
  *
- *   //configuring dependency on 'someLib' module
+ *   // Configuring dependency on 'someLib' module
  *   implementation(group: 'org.myorg', name: 'someLib', version:'1.0') {
- *     //explicitly adding the dependency artifact:
+ *     // Explicitly adding the dependency artifact:
+ *     // Prefer variant-aware dependency resolution
  *     artifact {
- *       //useful when some artifact properties unconventional
- *       name = 'someArtifact' //artifact name different than module name
+ *       // Useful when some artifact properties unconventional
+ *       name = 'someArtifact' // Artifact name different than module name
  *       extension = 'someExt'
  *       type = 'someType'
  *       classifier = 'someClassifier'
@@ -195,8 +198,9 @@ import java.util.Map;
  * <p>The notation <code>project(':project-a')</code> is similar to the syntax you use
  * when configuring a projectA in a multi-module gradle project.
  *
- * <p>By default, when you declare dependency to projectA, you actually declare dependency to the 'default' configuration of the projectA.
- * If you need to depend on a specific configuration of projectA, use map notation for projects:
+ * <p>Project dependencies are resolved by treating each consumable configuration in the target
+ * project as a variant and performing variant-aware attribute matching against them.
+ * However, in order to override this process, an explicit target configuration can be specified:
  * <p><code><i>configurationName</i> project(path: ':project-a', configuration: 'someOtherConfiguration')</code>
  *
  * <p>Project dependencies are represented using a {@link org.gradle.api.artifacts.ProjectDependency}.
@@ -220,7 +224,7 @@ import java.util.Map;
  * }
  * </pre>
  *
- * <p>File dependencies are represented using a {@link org.gradle.api.artifacts.SelfResolvingDependency}.</p>
+ * <p>File dependencies are represented using a {@link org.gradle.api.artifacts.FileCollectionDependency}.</p>
  *
  * <h3>Dependencies to other configurations</h3>
  *
@@ -256,6 +260,9 @@ import java.util.Map;
  * </pre>
  *
  * <h3>Client module dependencies</h3>
+ *
+ * <strong>Client module dependencies are deprecated and will be removed in Gradle 9.0.
+ * Please use component metadata rules instead.</strong>
  *
  * <p>To add a client module to a configuration you can use the notation:</p>
  *
@@ -358,7 +365,10 @@ public interface DependencyHandler extends ExtensionAware {
      *
      * @param notation The module notation, in one of the notations described above.
      * @return The dependency.
+     *
+     * @deprecated Please use component metadata rules instead. This method will be removed in Gradle 9.0.
      */
+    @Deprecated
     Dependency module(Object notation);
 
     /**
@@ -368,7 +378,10 @@ public interface DependencyHandler extends ExtensionAware {
      * @param notation The module notation, in one of the notations described above.
      * @param configureClosure The closure to use to configure the dependency.
      * @return The dependency.
+     *
+     * @deprecated Please use component metadata rules instead. This method will be removed in Gradle 9.0.
      */
+    @Deprecated
     Dependency module(Object notation, Closure configureClosure);
 
     /**
@@ -459,6 +472,11 @@ public interface DependencyHandler extends ExtensionAware {
 
     /**
      * Creates an artifact resolution query.
+     * <p>
+     * This is a legacy API and is in maintenance mode. In future versions of Gradle,
+     * this API will be deprecated and removed. New code should not use this API. Prefer
+     * {@link ArtifactView.ViewConfiguration#withVariantReselection()} for resolving
+     * sources and javadoc.
      *
      * @since 2.0
      */

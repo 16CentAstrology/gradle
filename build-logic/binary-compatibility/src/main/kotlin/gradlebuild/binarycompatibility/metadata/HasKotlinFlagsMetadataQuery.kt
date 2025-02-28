@@ -16,314 +16,115 @@
 
 package gradlebuild.binarycompatibility.metadata
 
-import kotlinx.metadata.ClassName
-import kotlinx.metadata.Flag
-import kotlinx.metadata.Flags
-import kotlinx.metadata.KmClassExtensionVisitor
-import kotlinx.metadata.KmClassVisitor
-import kotlinx.metadata.KmConstructorExtensionVisitor
-import kotlinx.metadata.KmConstructorVisitor
-import kotlinx.metadata.KmExtensionType
-import kotlinx.metadata.KmFunctionExtensionVisitor
-import kotlinx.metadata.KmFunctionVisitor
-import kotlinx.metadata.KmPackageExtensionVisitor
-import kotlinx.metadata.KmPackageVisitor
-import kotlinx.metadata.KmPropertyExtensionVisitor
-import kotlinx.metadata.KmPropertyVisitor
-import kotlinx.metadata.jvm.JvmClassExtensionVisitor
-import kotlinx.metadata.jvm.JvmConstructorExtensionVisitor
-import kotlinx.metadata.jvm.JvmFieldSignature
-import kotlinx.metadata.jvm.JvmFunctionExtensionVisitor
-import kotlinx.metadata.jvm.JvmMethodSignature
-import kotlinx.metadata.jvm.JvmPackageExtensionVisitor
-import kotlinx.metadata.jvm.JvmPropertyExtensionVisitor
+import kotlinx.metadata.KmClass
+import kotlinx.metadata.KmConstructor
+import kotlinx.metadata.KmFunction
+import kotlinx.metadata.KmPackage
+import kotlinx.metadata.KmProperty
+import kotlinx.metadata.KmPropertyAccessorAttributes
+import kotlinx.metadata.Visibility
 import kotlinx.metadata.jvm.KotlinClassMetadata
+import kotlinx.metadata.jvm.fieldSignature
+import kotlinx.metadata.jvm.getterSignature
+import kotlinx.metadata.jvm.setterSignature
+import kotlinx.metadata.jvm.signature
+import kotlinx.metadata.visibility
+import java.util.function.Supplier
 
 
 internal
-fun KotlinClassMetadata.hasKotlinFlag(memberType: MemberType, jvmSignature: String, flag: Flag): Boolean =
-    hasKotlinFlags(memberType, jvmSignature) { flags ->
-        flag(flags)
-    }
-
-
-private
-fun KotlinClassMetadata.hasKotlinFlags(memberType: MemberType, jvmSignature: String, predicate: (Flags) -> Boolean): Boolean =
+fun KotlinClassMetadata.hasAttribute(memberType: MemberType, jvmSignature: String, predicate: AttributePredicate): Boolean =
     when (this) {
-        is KotlinClassMetadata.Class -> classVisitorFor(memberType, jvmSignature, predicate).apply(::accept).isSatisfied
-        is KotlinClassMetadata.FileFacade -> packageVisitorFor(memberType, jvmSignature, predicate).apply(::accept).isSatisfied
-        is KotlinClassMetadata.MultiFileClassPart -> packageVisitorFor(memberType, jvmSignature, predicate).apply(::accept).isSatisfied
+        is KotlinClassMetadata.Class -> hasClassAttribute(this::kmClass, memberType, jvmSignature, predicate)
+        is KotlinClassMetadata.FileFacade -> hasPackageAttribute(this::kmPackage, memberType, jvmSignature, predicate)
+        is KotlinClassMetadata.MultiFileClassPart -> hasPackageAttribute(this::kmPackage, memberType, jvmSignature, predicate)
         is KotlinClassMetadata.MultiFileClassFacade -> false
         is KotlinClassMetadata.SyntheticClass -> false
         is KotlinClassMetadata.Unknown -> false
-        else -> throw IllegalStateException("Unsupported Kotlin metadata type '${this::class}'")
+        else -> error("Unsupported Kotlin metadata type '${this::class}'")
     }
 
 
 private
-typealias FlagsPredicate = (Flags) -> Boolean
-
-
-private
-interface CanBeSatisfied {
-    var isSatisfied: Boolean
+fun hasClassAttribute(kmClassSupplier: Supplier<KmClass>, memberType: MemberType, jvmSignature: String, predicate: AttributePredicate): Boolean {
+    val kmClass = kmClassSupplier.get()
+    return when (memberType) {
+        MemberType.TYPE -> hasTypeAttribute(kmClass, jvmSignature, predicate)
+        MemberType.FIELD -> hasPropertyAttribute(kmClass::properties, jvmSignature, predicate)
+        MemberType.CONSTRUCTOR -> hasConstructorAttribute(kmClass::constructors, jvmSignature, predicate)
+        MemberType.METHOD -> hasFunctionAttribute(kmClass::functions, jvmSignature, predicate) ||
+            hasPropertyAttribute(kmClass::properties, jvmSignature, predicate)
+    }
 }
 
 
 private
-abstract class SatisfiableClassVisitor : KmClassVisitor(), CanBeSatisfied
-
-
-private
-abstract class SatisfiablePackageVisitor : KmPackageVisitor(), CanBeSatisfied
-
-
-@Suppress("unchecked_cast")
-private
-fun classVisitorFor(memberType: MemberType, jvmSignature: String, predicate: FlagsPredicate): SatisfiableClassVisitor =
-    when (memberType) {
-        MemberType.TYPE -> TypeFlagsKmClassVisitor(jvmSignature, predicate)
-        MemberType.FIELD -> FieldFlagsKmClassVisitor(jvmSignature, predicate)
-        MemberType.CONSTRUCTOR -> ConstructorFlagsKmClassVisitor(jvmSignature, predicate)
-        MemberType.METHOD -> MethodFlagsKmClassVisitor(jvmSignature, predicate)
+fun hasPackageAttribute(kmPackageSupplier: Supplier<KmPackage>, memberType: MemberType, jvmSignature: String, predicate: AttributePredicate): Boolean {
+    val kmPackage = kmPackageSupplier.get()
+    return when (memberType) {
+        MemberType.FIELD -> hasPropertyAttribute(kmPackage::properties, jvmSignature, predicate)
+        MemberType.METHOD -> hasFunctionAttribute(kmPackage::functions, jvmSignature, predicate) ||
+            hasPropertyAttribute(kmPackage::properties, jvmSignature, predicate)
+        else -> false
     }
+}
 
 
-@Suppress("unchecked_cast")
 private
-fun packageVisitorFor(memberType: MemberType, jvmSignature: String, predicate: FlagsPredicate): SatisfiablePackageVisitor =
-    when (memberType) {
-        MemberType.FIELD -> FieldFlagsKmPackageVisitor(jvmSignature, predicate)
-        MemberType.METHOD -> MethodFlagsKmPackageVisitor(jvmSignature, predicate)
-        else -> NoopFlagsKmPackageVisitor
+fun hasTypeAttribute(kmClass: KmClass, jvmSignature: String, predicate: AttributePredicate): Boolean =
+    when (jvmSignature) {
+        kmClass.name.replace("/", ".") -> predicate.match(kmClass)
+        else -> false
     }
 
 
 private
-class TypeFlagsKmClassVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate
-) : SatisfiableClassVisitor() {
+fun hasConstructorAttribute(constructorsSupplier: Supplier<MutableList<KmConstructor>>, jvmSignature: String, predicate: AttributePredicate) =
+    constructorsSupplier.get().firstOrNull { c -> jvmSignature == c.signature?.toString() }?.let { predicate.match(it) } ?: false
 
-    override var isSatisfied = false
 
-    private
-    var isDoneVisiting = false
+private
+fun hasFunctionAttribute(functionsSupplier: Supplier<MutableList<KmFunction>>, jvmSignature: String, predicate: AttributePredicate) =
+    functionsSupplier.get().firstOrNull {
+        jvmSignature == it.signature?.toString()
+    }?.let { predicate.match(it) } ?: false
 
-    override fun visit(flags: Flags, name: ClassName) {
-        if (!isDoneVisiting && jvmSignature == name.replace("/", ".")) {
-            isSatisfied = predicate(flags)
-            isDoneVisiting = true
+
+private
+fun hasPropertyAttribute(propertiesSupplier: Supplier<MutableList<KmProperty>>, jvmSignature: String, predicate: AttributePredicate): Boolean {
+    val properties = propertiesSupplier.get()
+    for (p in properties) {
+        when (jvmSignature) {
+            p.fieldSignature?.toString() -> return predicate.match(p)
+            p.getterSignature?.toString() -> return predicate.match(p.getter)
+            p.setterSignature?.toString() -> return p.setter?.let { predicate.match(it) } ?: false
         }
     }
+    return false
 }
 
+interface AttributePredicate {
+    fun match(kmClass: KmClass): Boolean
+    fun match(kmConstructor: KmConstructor): Boolean
+    fun match(kmProperty: KmProperty): Boolean
+    fun match(kmFunction: KmFunction): Boolean
+    fun match(kmPropertyAccessorAttributes: KmPropertyAccessorAttributes): Boolean
 
-private
-class FieldFlagsKmClassVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate
-) : SatisfiableClassVisitor() {
-
-    override var isSatisfied = false
-
-    private
-    var isDoneVisiting = false
-
-    private
-    val onMatch = { satisfaction: Boolean ->
-        isSatisfied = satisfaction
-        isDoneVisiting = true
-    }
-
-    override fun visitProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor? =
-        if (isDoneVisiting) null
-        else MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-
-    override fun visitExtensions(type: KmExtensionType): KmClassExtensionVisitor? =
-        if (isDoneVisiting) null
-        else object : JvmClassExtensionVisitor() {
-            override fun visitLocalDelegatedProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor? =
-                MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
+    companion object Factory {
+        fun visibility(visibility: Visibility): AttributePredicate = object: AttributePredicate {
+            override fun match(kmClass: KmClass) = kmClass.visibility == visibility
+            override fun match(kmConstructor: KmConstructor) = kmConstructor.visibility == visibility
+            override fun match(kmProperty: KmProperty) = kmProperty.visibility == visibility
+            override fun match(kmFunction: KmFunction) = kmFunction.visibility == visibility
+            override fun match(kmPropertyAccessorAttributes: KmPropertyAccessorAttributes) = kmPropertyAccessorAttributes.visibility == visibility
         }
-}
 
-
-private
-class ConstructorFlagsKmClassVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate
-) : SatisfiableClassVisitor() {
-
-    override var isSatisfied = false
-
-    private
-    var isDoneVisiting = false
-
-    override fun visitConstructor(flags: Flags): KmConstructorVisitor? =
-        if (isDoneVisiting) null
-        else object : KmConstructorVisitor() {
-            override fun visitExtensions(type: KmExtensionType): KmConstructorExtensionVisitor =
-                object : JvmConstructorExtensionVisitor() {
-                    override fun visit(signature: JvmMethodSignature?) {
-                        if (jvmSignature == signature?.asString()) {
-                            isSatisfied = predicate(flags)
-                            isDoneVisiting = true
-                        }
-                    }
-                }
-        }
-}
-
-
-private
-class MethodFlagsKmClassVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate
-) : SatisfiableClassVisitor() {
-
-    override var isSatisfied = false
-
-    private
-    var isDoneVisiting = false
-
-    private
-    val onMatch = { satisfaction: Boolean ->
-        isSatisfied = satisfaction
-        isDoneVisiting = true
-    }
-
-    override fun visitFunction(flags: Flags, name: String): KmFunctionVisitor? =
-        if (isDoneVisiting) null
-        else MethodFlagsKmFunctionVisitor(jvmSignature, predicate, flags, onMatch)
-
-    override fun visitProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor? =
-        if (isDoneVisiting) null
-        else MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-
-    override fun visitExtensions(type: KmExtensionType): KmClassExtensionVisitor? =
-        if (isDoneVisiting) null
-        else object : JvmClassExtensionVisitor() {
-            override fun visitLocalDelegatedProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor =
-                MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-        }
-}
-
-
-private
-class FieldFlagsKmPackageVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate
-) : SatisfiablePackageVisitor() {
-
-    override var isSatisfied = false
-
-    private
-    var isDoneVisiting = false
-
-    private
-    val onMatch = { satisfaction: Boolean ->
-        isSatisfied = satisfaction
-        isDoneVisiting = true
-    }
-
-    override fun visitProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor? =
-        if (isDoneVisiting) null
-        else MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-
-    override fun visitExtensions(type: KmExtensionType): KmPackageExtensionVisitor? =
-        if (isDoneVisiting) null
-        else object : JvmPackageExtensionVisitor() {
-            override fun visitLocalDelegatedProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor =
-                MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-        }
-}
-
-
-private
-class MethodFlagsKmPackageVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate
-) : SatisfiablePackageVisitor() {
-
-    override var isSatisfied = false
-
-    private
-    var isDoneVisiting = false
-
-    private
-    val onMatch = { satisfaction: Boolean ->
-        isSatisfied = satisfaction
-        isDoneVisiting = true
-    }
-
-    override fun visitFunction(flags: Flags, name: String): KmFunctionVisitor? =
-        if (isDoneVisiting) null
-        else MethodFlagsKmFunctionVisitor(jvmSignature, predicate, flags, onMatch)
-
-    override fun visitProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor? =
-        if (isDoneVisiting) null
-        else MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-
-    override fun visitExtensions(type: KmExtensionType): KmPackageExtensionVisitor? =
-        if (isDoneVisiting) null
-        else object : JvmPackageExtensionVisitor() {
-            override fun visitLocalDelegatedProperty(flags: Flags, name: String, getterFlags: Flags, setterFlags: Flags): KmPropertyVisitor =
-                MemberFlagsKmPropertyExtensionVisitor(jvmSignature, predicate, flags, getterFlags, setterFlags, onMatch)
-        }
-}
-
-
-private
-object NoopFlagsKmPackageVisitor : SatisfiablePackageVisitor() {
-    override var isSatisfied = false
-}
-
-
-private
-class MemberFlagsKmPropertyExtensionVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate,
-    private val fieldFlags: Flags,
-    private val getterFlags: Flags,
-    private val setterFlags: Flags,
-    private val onMatch: (Boolean) -> Unit
-) : KmPropertyVisitor() {
-
-    private
-    val kmPropertyExtensionVisitor = object : JvmPropertyExtensionVisitor() {
-
-        override fun visit(jvmFlags: Flags, fieldSignature: JvmFieldSignature?, getterSignature: JvmMethodSignature?, setterSignature: JvmMethodSignature?) {
-            when (jvmSignature) {
-                fieldSignature?.asString() -> onMatch(predicate(fieldFlags))
-                getterSignature?.asString() -> onMatch(predicate(getterFlags))
-                setterSignature?.asString() -> onMatch(predicate(setterFlags))
-            }
+        fun functionAttribute(test: (KmFunction) -> Boolean): AttributePredicate = object: AttributePredicate {
+            override fun match(kmClass: KmClass) = false
+            override fun match(kmConstructor: KmConstructor) = false
+            override fun match(kmProperty: KmProperty) = false
+            override fun match(kmFunction: KmFunction) = test(kmFunction)
+            override fun match(kmPropertyAccessorAttributes: KmPropertyAccessorAttributes) = false
         }
     }
-
-    override fun visitExtensions(type: KmExtensionType): KmPropertyExtensionVisitor =
-        kmPropertyExtensionVisitor
-}
-
-
-private
-class MethodFlagsKmFunctionVisitor(
-    private val jvmSignature: String,
-    private val predicate: FlagsPredicate,
-    private val functionFlags: Flags,
-    private val onMatch: (Boolean) -> Unit
-) : KmFunctionVisitor() {
-
-    private
-    val kmFunctionExtensionVisitor = object : JvmFunctionExtensionVisitor() {
-        override fun visit(signature: JvmMethodSignature?) {
-            if (jvmSignature == signature?.asString()) {
-                onMatch(predicate(functionFlags))
-            }
-        }
-    }
-
-    override fun visitExtensions(type: KmExtensionType): KmFunctionExtensionVisitor? =
-        kmFunctionExtensionVisitor
 }

@@ -20,7 +20,6 @@ import org.gradle.api.artifacts.component.BuildIdentifier
 import org.gradle.api.internal.BuildDefinition
 import org.gradle.api.internal.DocumentationRegistry
 import org.gradle.api.internal.GradleInternal
-import org.gradle.initialization.exception.ExceptionAnalyser
 import org.gradle.internal.build.BuildLifecycleController
 import org.gradle.internal.build.BuildModelControllerServices
 import org.gradle.internal.build.BuildState
@@ -29,6 +28,7 @@ import org.gradle.internal.buildtree.BuildTreeFinishExecutor
 import org.gradle.internal.buildtree.BuildTreeLifecycleController
 import org.gradle.internal.buildtree.BuildTreeLifecycleControllerFactory
 import org.gradle.internal.buildtree.BuildTreeState
+import org.gradle.internal.exception.ExceptionAnalyser
 import org.gradle.internal.operations.BuildOperationExecutor
 import org.gradle.internal.service.DefaultServiceRegistry
 import org.gradle.util.Path
@@ -53,7 +53,6 @@ class DefaultNestedBuildTest extends Specification {
 
     DefaultNestedBuild build() {
         _ * factory.servicesForBuild(buildDefinition, _, owner) >> Mock(BuildModelControllerServices.Supplier)
-        _ * owner.currentPrefixForProjectsInChildBuilds >> Path.path(":owner")
         _ * factory.newInstance(buildDefinition, _, owner, _) >> controller
         _ * buildDefinition.name >> "nested"
         services.add(Stub(BuildOperationExecutor))
@@ -76,7 +75,6 @@ class DefaultNestedBuildTest extends Specification {
 
     def "runs action and does not finish build"() {
         given:
-        services.add(new BuildModelParameters(false, false, false, false, false, false, false))
         def build = build()
 
         when:

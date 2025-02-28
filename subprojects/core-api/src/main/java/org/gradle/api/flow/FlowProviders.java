@@ -16,10 +16,9 @@
 
 package org.gradle.api.flow;
 
-import org.gradle.StartParameter;
 import org.gradle.api.Incubating;
 import org.gradle.api.provider.Provider;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
 
 /**
@@ -29,19 +28,18 @@ import org.gradle.internal.service.scopes.ServiceScope;
  * @since 8.1
  */
 @Incubating
-@ServiceScope(Scopes.Build.class)
+@ServiceScope(Scope.Build.class)
 public interface FlowProviders {
 
     /**
-     * Returns a {@link Provider provider} for the summary of the result of executing the
-     * {@link StartParameter#getTaskRequests() requested tasks}.
+     * Returns a {@link Provider provider} for the summary result of the execution of the work scheduled
+     * for the current build.
      * <p>
-     * The returned {@link Provider#get() provider's value} becomes available after all requested tasks
-     * have completed - successfully or otherwise - or after a configuration phase failure prevents the execution
-     * of the requested tasks.
+     * The returned {@link Provider#get() provider's value} becomes available after the scheduled work
+     * has completed - successfully or otherwise - or after a configuration phase failure prevents execution.
      * </p>
      * <p>
-     * <b>IMPORTANT:</b> trying to access the provider's value before the requested tasks have finished will
+     * <b>IMPORTANT:</b> trying to access the provider's value before the scheduled work has finished will
      * result in an error.
      * </p>
      *
@@ -65,7 +63,7 @@ public interface FlowProviders {
      *         final File soundsDir = new File(target.getSettingsDir(), "sounds");
      *         flowScope.always(FFPlay.class, spec -&gt;
      *             spec.getParameters().getMediaFile().fileProvider(
-     *                 flowProviders.getRequestedTasksResult().map(result -&gt;
+     *                 flowProviders.getBuildWorkResult().map(result -&gt;
      *                     new File(
      *                         soundsDir,
      *                         result.getFailure().isPresent() ? "sad-trombone.mp3" : "tada.mp3"
@@ -80,5 +78,5 @@ public interface FlowProviders {
      * @see FlowAction
      * @see FlowScope
      */
-    Provider<RequestedTasksResult> getRequestedTasksResult();
+    Provider<BuildWorkResult> getBuildWorkResult();
 }

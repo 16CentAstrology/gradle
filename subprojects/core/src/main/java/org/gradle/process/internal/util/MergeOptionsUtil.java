@@ -16,11 +16,12 @@
 
 package org.gradle.process.internal.util;
 
-import com.google.common.collect.Sets;
 import org.gradle.api.InvalidUserDataException;
 
 import javax.annotation.Nullable;
 import java.io.File;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -32,7 +33,7 @@ public class MergeOptionsUtil {
             return -1; // unspecified
         }
 
-        String normalized = heapSize.trim().toLowerCase();
+        String normalized = heapSize.trim().toLowerCase(Locale.ROOT);
         try {
             if (normalized.endsWith("m")) {
                 return Integer.parseInt(normalized.substring(0, normalized.length() - 1));
@@ -68,7 +69,7 @@ public class MergeOptionsUtil {
     }
 
     public static Set<String> normalized(@Nullable Iterable<String> strings) {
-        Set<String> normalized = Sets.newLinkedHashSet();
+        Set<String> normalized = new LinkedHashSet<>();
         if (strings != null) {
             for (String string : strings) {
                 normalized.add(normalized(string));

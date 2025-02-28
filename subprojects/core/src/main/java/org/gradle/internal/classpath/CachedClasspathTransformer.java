@@ -16,44 +16,31 @@
 
 package org.gradle.internal.classpath;
 
-import org.gradle.api.file.RelativePath;
-import org.gradle.internal.Pair;
-import org.gradle.internal.hash.Hasher;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.classpath.transforms.ClassTransform;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
-import org.objectweb.asm.ClassVisitor;
 
-import java.io.IOException;
 import java.net.URL;
 import java.util.Collection;
 
 /**
  * Represents a transformer that takes a given ClassPath and transforms it to a ClassPath with cached jars
  */
-@ServiceScope(Scopes.UserHome.class)
+@ServiceScope(Scope.UserHome.class)
 public interface CachedClasspathTransformer {
-    enum StandardTransform {
-        BuildLogic, None
-    }
 
     /**
-     * Transforms a classpath to a classpath with the given transformations applied.
+     * Transforms a classpath to a new classpath with a no-op transform that copies files to a cache location.
      */
-    ClassPath transform(ClassPath classPath, StandardTransform transform);
+    ClassPath copyingTransform(ClassPath classPath);
 
     /**
-     * Transforms a classpath to a classpath with the given transformations applied.
+     * Transform a collection of urls to a new collection with a no-op transform that copies files to a cache location.
      */
-    ClassPath transform(ClassPath classPath, StandardTransform transform, Transform additional);
+    Collection<URL> copyingTransform(Collection<URL> urls);
 
     /**
-     * Transform a collection of urls to a new collection where the file urls are cached jars
+     * Transforms a classpath to a classpath with the given transformations applied, result classpath files are cached in a cache location.
      */
-    Collection<URL> transform(Collection<URL> urls, StandardTransform transform);
-
-    interface Transform {
-        void applyConfigurationTo(Hasher hasher);
-
-        Pair<RelativePath, ClassVisitor> apply(ClasspathEntryVisitor.Entry entry, ClassVisitor visitor) throws IOException;
-    }
+    ClassPath transform(ClassPath classPath, ClassTransform classTransform);
 }

@@ -17,16 +17,15 @@
 package org.gradle.initialization;
 
 import com.google.common.collect.ImmutableMap;
-import org.gradle.api.internal.properties.GradleProperties;
+import org.gradle.initialization.properties.MutableGradleProperties;
 
 import javax.annotation.Nullable;
-import java.util.HashMap;
 import java.util.Map;
 
-class DefaultGradleProperties implements GradleProperties {
+public class DefaultGradleProperties implements MutableGradleProperties {
     private final Map<String, Object> defaultProperties;
     private final Map<String, Object> overrideProperties;
-    private final ImmutableMap<String, Object> gradleProperties;
+    private ImmutableMap<String, Object> gradleProperties;
 
     public DefaultGradleProperties(
         Map<String, Object> defaultProperties,
@@ -34,7 +33,7 @@ class DefaultGradleProperties implements GradleProperties {
     ) {
         this.defaultProperties = defaultProperties;
         this.overrideProperties = overrideProperties;
-        gradleProperties = immutablePropertiesWith(ImmutableMap.of());
+        this.gradleProperties = mergePropertiesWith(ImmutableMap.of());
     }
 
     @Nullable
@@ -47,18 +46,25 @@ class DefaultGradleProperties implements GradleProperties {
     public Map<String, Object> mergeProperties(Map<String, Object> properties) {
         return properties.isEmpty()
             ? gradleProperties
-            : immutablePropertiesWith(properties);
+            : mergePropertiesWith(properties);
     }
 
-    ImmutableMap<String, Object> immutablePropertiesWith(Map<String, Object> properties) {
-        return ImmutableMap.copyOf(mergePropertiesWith(properties));
+    @Override
+    public void updateOverrideProperties(Map<String, Object> properties) {
+        overrideProperties.putAll(properties);
+        gradleProperties = mergePropertiesWith(ImmutableMap.of());
     }
 
-    Map<String, Object> mergePropertiesWith(Map<String, Object> properties) {
-        Map<String, Object> result = new HashMap<>();
-        result.putAll(defaultProperties);
-        result.putAll(properties);
-        result.putAll(overrideProperties);
-        return result;
+    @Override
+    public Map<String, Object> getProperties() {
+        return gradleProperties;
+    }
+
+    private ImmutableMap<String, Object> mergePropertiesWith(Map<String, Object> properties) {
+        return ImmutableMap.<String, Object>builder()
+            .putAll(defaultProperties)
+            .putAll(properties)
+            .putAll(overrideProperties)
+            .buildKeepingLast();
     }
 }

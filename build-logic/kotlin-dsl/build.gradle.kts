@@ -5,14 +5,16 @@ plugins {
 description = "Provides plugins to configure Kotlin DSL and patch the Kotlin compiler for use in Kotlin subprojects"
 
 dependencies {
-    implementation(project(":basics"))
-    implementation(project(":dependency-modules"))
-    implementation(project(":jvm"))
+    implementation("gradlebuild:basics")
 
-    implementation("org.gradle.kotlin:gradle-kotlin-dsl-conventions")
+    implementation(projects.dependencyModules)
+    implementation(projects.jvm)
+    implementation(projects.kotlinDslSharedRuntime)
+
     implementation(kotlin("gradle-plugin"))
     implementation(kotlin("sam-with-receiver"))
     implementation("org.ow2.asm:asm")
+    implementation("com.thoughtworks.qdox:qdox")
 
     testImplementation("junit:junit")
     testImplementation("com.nhaarman:mockito-kotlin")

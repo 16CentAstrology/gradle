@@ -32,6 +32,7 @@ import org.gradle.api.internal.file.TestFiles
 import org.gradle.api.internal.initialization.ClassLoaderScope
 import org.gradle.api.internal.initialization.RootClassLoaderScope
 import org.gradle.api.internal.initialization.loadercache.DummyClassLoaderCache
+import org.gradle.api.problems.Problems
 import org.gradle.configuration.ImportsReader
 import org.gradle.groovy.scripts.ScriptCompilationException
 import org.gradle.groovy.scripts.ScriptSource
@@ -52,6 +53,7 @@ import org.gradle.internal.serialize.Serializer
 import org.gradle.internal.serialize.kryo.KryoBackedDecoder
 import org.gradle.test.fixtures.file.TestNameTestDirectoryProvider
 import org.gradle.util.SetSystemProperties
+import org.gradle.util.TestUtil
 import org.junit.Rule
 import spock.lang.Ignore
 import spock.lang.Issue
@@ -98,7 +100,13 @@ class DefaultScriptCompilationHandlerTest extends Specification {
         scriptCompilationHandler = new DefaultScriptCompilationHandler(
             TestFiles.deleter(),
             importsReader
-        )
+        ) {
+            @Override
+            protected Problems getProblemsService() {
+                return TestUtil.problemsService()
+            }
+        }
+
         scriptCacheDir = new File(testProjectDir, "cache")
         scriptClassPath = DefaultClassPath.of(scriptCacheDir)
         metadataCacheDir = new File(testProjectDir, "metadata")

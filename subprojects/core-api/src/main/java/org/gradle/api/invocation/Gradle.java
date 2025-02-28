@@ -21,10 +21,12 @@ import org.gradle.BuildListener;
 import org.gradle.BuildResult;
 import org.gradle.StartParameter;
 import org.gradle.api.Action;
+import org.gradle.api.Incubating;
 import org.gradle.api.Project;
 import org.gradle.api.ProjectEvaluationListener;
 import org.gradle.api.UnknownDomainObjectException;
 import org.gradle.api.execution.TaskExecutionGraph;
+import org.gradle.api.flow.FlowProviders;
 import org.gradle.api.initialization.IncludedBuild;
 import org.gradle.api.initialization.Settings;
 import org.gradle.api.plugins.ExtensionAware;
@@ -64,9 +66,9 @@ public interface Gradle extends PluginAware, ExtensionAware {
      *
      * This directory is the directory containing the Gradle distribution executing this build.
      * <p>
-     * When using the “Gradle Daemon”, this may not be the same Gradle distribution that the build was started with.
+     * When using the "Gradle Daemon", this may not be the same Gradle distribution that the build was started with.
      * If an existing daemon process is running that is deemed compatible (e.g. has the desired JVM characteristics)
-     * then this daemon may be used instead of starting a new process and it may have been started from a different “gradle home”.
+     * then this daemon may be used instead of starting a new process and it may have been started from a different "gradle home".
      * However, it is guaranteed to be the same version of Gradle. For more information on the Gradle Daemon, please consult the
      * <a href="https://docs.gradle.org/current/userguide/gradle_daemon.html" target="_top">User Manual</a>.
      *
@@ -139,6 +141,14 @@ public interface Gradle extends PluginAware, ExtensionAware {
      * @param listener The listener to remove. Does nothing if this listener has not been added.
      */
     void removeProjectEvaluationListener(ProjectEvaluationListener listener);
+
+    /**
+     * Gives access to the new Gradle build lifecycle callbacks.
+     *
+     * @since 8.8
+     */
+    @Incubating
+    GradleLifecycle getLifecycle();
 
     /**
      * Adds a closure to be called immediately before a project is evaluated. The project is passed to the closure as a
@@ -271,6 +281,7 @@ public interface Gradle extends PluginAware, ExtensionAware {
      * A {@link BuildResult} instance is passed to the closure as a parameter.
      *
      * @param closure The closure to execute.
+     * @see FlowProviders#getBuildWorkResult()
      * @deprecated This method is not supported when configuration caching is enabled.
      */
     @Deprecated
@@ -282,6 +293,7 @@ public interface Gradle extends PluginAware, ExtensionAware {
      * All selected tasks have been executed.
      *
      * @param action The action to execute.
+     * @see FlowProviders#getBuildWorkResult()
      * @since 3.4
      * @deprecated This method is not supported when configuration caching is enabled.
      */
@@ -301,10 +313,8 @@ public interface Gradle extends PluginAware, ExtensionAware {
      * Adds the given listener to this build. The listener may implement any of the given listener interfaces:
      *
      * <ul>
-     * <li>{@link org.gradle.BuildListener}
      * <li>{@link org.gradle.api.execution.TaskExecutionGraphListener}
      * <li>{@link org.gradle.api.ProjectEvaluationListener}
-     * <li>{@link org.gradle.api.logging.StandardOutputListener}
      * <li>{@link org.gradle.api.artifacts.DependencyResolutionListener}
      * </ul>
      *
@@ -312,6 +322,7 @@ public interface Gradle extends PluginAware, ExtensionAware {
      * Their usage is deprecated and adding a listener of these types become an error in a future Gradle version:</p>
      *
      * <ul>
+     * <li>{@link org.gradle.BuildListener}
      * <li>{@link org.gradle.api.execution.TaskExecutionListener}
      * <li>{@link org.gradle.api.execution.TaskActionListener}
      * <li>{@link org.gradle.api.tasks.testing.TestListener}
@@ -341,7 +352,9 @@ public interface Gradle extends PluginAware, ExtensionAware {
      * provides with your own implementation, for certain types of events.
      *
      * @param logger The logger to use.
+     * @deprecated Will be removed in Gradle 9. Logging customization through listeners is no longer supported.
      */
+    @Deprecated
     void useLogger(Object logger);
 
     /**

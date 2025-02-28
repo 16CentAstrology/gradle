@@ -15,6 +15,19 @@
  */
 package org.gradle.api.internal.tasks.properties;
 
+import javax.annotation.Nonnull;
+import java.util.function.Supplier;
+
+/**
+ * An action that validates property values.
+ */
 public interface ValidationAction {
-    void validate(String propertyName, Object value, PropertyValidationContext context);
+    /**
+     * Validates the given property value according to some rule.
+     *
+     * @param propertyName the name of the property being validated
+     * @param value a supplier of a non-null value - side effects are guaranteed to happen only once
+     * @param context the context in which the validation is being performed
+     */
+    void validate(String propertyName, @Nonnull Supplier<Object> value, PropertyValidationContext context);
 }

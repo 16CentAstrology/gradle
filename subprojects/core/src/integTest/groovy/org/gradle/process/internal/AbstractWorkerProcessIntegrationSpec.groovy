@@ -27,13 +27,14 @@ import org.gradle.api.internal.file.temp.TemporaryFileProvider
 import org.gradle.api.logging.LogLevel
 import org.gradle.cache.UnscopedCacheBuilderFactory
 import org.gradle.cache.internal.CacheFactory
-import org.gradle.cache.internal.DefaultUnscopedCacheBuilderFactory
 import org.gradle.cache.internal.CacheScopeMapping
+import org.gradle.cache.internal.DefaultUnscopedCacheBuilderFactory
 import org.gradle.cache.internal.scopes.DefaultCacheScopeMapping
 import org.gradle.cache.internal.scopes.DefaultGlobalScopedCacheBuilderFactory
 import org.gradle.cache.scopes.GlobalScopedCacheBuilderFactory
 import org.gradle.initialization.layout.GlobalCacheDir
 import org.gradle.internal.id.LongIdGenerator
+import org.gradle.internal.instrumentation.agent.AgentStatus
 import org.gradle.internal.jvm.inspection.CachingJvmMetadataDetector
 import org.gradle.internal.jvm.inspection.DefaultJvmMetadataDetector
 import org.gradle.internal.jvm.inspection.DefaultJvmVersionDetector
@@ -65,7 +66,7 @@ abstract class AbstractWorkerProcessIntegrationSpec extends Specification {
     DefaultServiceRegistry services = (DefaultServiceRegistry) ServiceRegistryBuilder.builder()
         .parent(NativeServicesTestFixture.getInstance())
         .provider(LoggingServiceRegistry.NO_OP)
-        .provider(new GlobalScopeServices(false))
+        .provider(new GlobalScopeServices(false, AgentStatus.disabled()))
         .build()
     final MessagingServer server = services.get(MessagingServer.class)
     @Rule
@@ -75,16 +76,17 @@ abstract class AbstractWorkerProcessIntegrationSpec extends Specification {
     final CacheFactory factory = services.get(CacheFactory.class)
     final GlobalCacheDir globalCacheDir = new GlobalCacheDir({ tmpDir.testDirectory })
     final CacheScopeMapping scopeMapping = new DefaultCacheScopeMapping(globalCacheDir.dir, GradleVersion.current())
-    final UnscopedCacheBuilderFactory cacheRepository = new DefaultUnscopedCacheBuilderFactory(scopeMapping, factory)
+    final UnscopedCacheBuilderFactory cacheRepository = new DefaultUnscopedCacheBuilderFactory(factory)
     final GlobalScopedCacheBuilderFactory globalScopedCache = new DefaultGlobalScopedCacheBuilderFactory(globalCacheDir.dir, cacheRepository)
     final ModuleRegistry moduleRegistry = services.get(ModuleRegistry)
     final WorkerProcessClassPathProvider workerProcessClassPathProvider = new WorkerProcessClassPathProvider(globalScopedCache, moduleRegistry)
     final ClassPathRegistry classPathRegistry = new DefaultClassPathRegistry(new DefaultClassPathProvider(moduleRegistry), workerProcessClassPathProvider)
-    final JavaExecHandleFactory execHandleFactory = TestFiles.javaExecHandleFactory(tmpDir.testDirectory)
+    final JavaExecHandleFactory javaExecHandleFactory = TestFiles.javaExecHandleFactory(tmpDir.testDirectory)
+    final ClientExecHandleBuilderFactory execHandleFactory = TestFiles.execHandleFactory(tmpDir.testDirectory)
     final OutputEventListener outputEventListener = new TestOutputEventListener()
     final TemporaryFileProvider tmpDirTemporaryFileProvider = TestFiles.tmpDirTemporaryFileProvider(tmpDir.testDirectory)
     final DefaultJvmMetadataDetector defaultJvmMetadataDetector = new DefaultJvmMetadataDetector(
-        execHandleFactory as ExecHandleFactory,
+        execHandleFactory,
         tmpDirTemporaryFileProvider
     )
     DefaultWorkerProcessFactory workerFactory = new DefaultWorkerProcessFactory(
@@ -94,7 +96,7 @@ abstract class AbstractWorkerProcessIntegrationSpec extends Specification {
         new LongIdGenerator(),
         tmpDir.file("gradleUserHome"),
         tmpDirTemporaryFileProvider,
-        execHandleFactory,
+        javaExecHandleFactory,
         new DefaultJvmVersionDetector(new CachingJvmMetadataDetector(defaultJvmMetadataDetector)),
         outputEventListener,
         Stub(MemoryManager)

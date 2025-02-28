@@ -20,6 +20,8 @@ import org.gradle.api.Action;
 import org.gradle.api.GradleException;
 import org.gradle.api.NonNullApi;
 import org.gradle.api.Transformer;
+import org.gradle.api.file.ConfigurableFilePermissions;
+import org.gradle.api.file.CopyProcessingSpec;
 import org.gradle.api.file.CopySpec;
 import org.gradle.api.file.DuplicatesStrategy;
 import org.gradle.api.file.ExpandDetails;
@@ -27,6 +29,7 @@ import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.FileCopyDetails;
 import org.gradle.api.file.FileTree;
 import org.gradle.api.file.FileTreeElement;
+import org.gradle.api.file.FilePermissions;
 import org.gradle.api.internal.ConventionTask;
 import org.gradle.api.internal.DocumentationRegistry;
 import org.gradle.api.internal.file.FileLookup;
@@ -39,8 +42,12 @@ import org.gradle.api.internal.file.copy.CopySpecInternal;
 import org.gradle.api.internal.file.copy.CopySpecResolver;
 import org.gradle.api.internal.file.copy.CopySpecSource;
 import org.gradle.api.internal.file.copy.DefaultCopySpec;
+import org.gradle.api.internal.provider.PropertyFactory;
 import org.gradle.api.model.ObjectFactory;
+import org.gradle.api.provider.Property;
 import org.gradle.api.specs.Spec;
+import org.gradle.internal.instrumentation.api.annotations.NotToBeReplacedByLazyProperty;
+import org.gradle.internal.instrumentation.api.annotations.ToBeReplacedByLazyProperty;
 import org.gradle.internal.nativeintegration.filesystem.FileSystem;
 import org.gradle.internal.reflect.Instantiator;
 import org.gradle.util.internal.ClosureBackedAction;
@@ -88,9 +95,9 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
             getInputs().property(specPropertyName + ".caseSensitive", (Callable<Boolean>) spec::isCaseSensitive);
             getInputs().property(specPropertyName + ".includeEmptyDirs", (Callable<Boolean>) spec::getIncludeEmptyDirs);
             getInputs().property(specPropertyName + ".duplicatesStrategy", (Callable<DuplicatesStrategy>) spec::getDuplicatesStrategy);
-            getInputs().property(specPropertyName + ".dirMode", (Callable<Integer>) spec::getDirMode)
+            getInputs().property(specPropertyName + ".dirPermissions", spec.getDirPermissions().map(FilePermissions::toUnixNumeric))
                 .optional(true);
-            getInputs().property(specPropertyName + ".fileMode", (Callable<Integer>) spec::getFileMode)
+            getInputs().property(specPropertyName + ".filePermissions", spec.getFilePermissions().map(FilePermissions::toUnixNumeric))
                 .optional(true);
             getInputs().property(specPropertyName + ".filteringCharset", (Callable<String>) spec::getFilteringCharset);
         });
@@ -142,6 +149,11 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
         throw new UnsupportedOperationException();
     }
 
+    @Inject
+    protected PropertyFactory getPropertyFactory() {
+        throw new UnsupportedOperationException();
+    }
+
     @TaskAction
     protected void copy() {
         CopyActionExecuter copyActionExecuter = createCopyActionExecuter();
@@ -154,7 +166,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
         Instantiator instantiator = getInstantiator();
         FileSystem fileSystem = getFileSystem();
 
-        return new CopyActionExecuter(instantiator, getObjectFactory(), fileSystem, false, getDocumentationRegistry());
+        return new CopyActionExecuter(instantiator, getPropertyFactory(), fileSystem, false, getDocumentationRegistry());
     }
 
     /**
@@ -163,12 +175,14 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      * @return The source files. Never returns null.
      */
     @Internal
+    @NotToBeReplacedByLazyProperty(because = "Read-only nested like property")
     public FileCollection getSource() {
         return rootSpec.buildRootResolver().getAllSource();
     }
 
     @Internal
     @Override
+    @NotToBeReplacedByLazyProperty(because = "Read-only nested like property")
     public CopySpecInternal getRootSpec() {
         return rootSpec;
     }
@@ -187,6 +201,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @ToBeReplacedByLazyProperty
     public boolean isCaseSensitive() {
         return getMainSpec().isCaseSensitive();
     }
@@ -204,6 +219,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @ToBeReplacedByLazyProperty
     public boolean getIncludeEmptyDirs() {
         return getMainSpec().getIncludeEmptyDirs();
     }
@@ -229,6 +245,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @ToBeReplacedByLazyProperty
     public DuplicatesStrategy getDuplicatesStrategy() {
         return getRootSpec().getDuplicatesStrategy();
     }
@@ -418,6 +435,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @ToBeReplacedByLazyProperty
     public Set<String> getIncludes() {
         return getMainSpec().getIncludes();
     }
@@ -436,6 +454,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @ToBeReplacedByLazyProperty
     public Set<String> getExcludes() {
         return getMainSpec().getExcludes();
     }
@@ -452,7 +471,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      * {@inheritDoc}
      */
     @Override
-    public AbstractCopyTask rename(Transformer<String, String> renamer) {
+    public AbstractCopyTask rename(Transformer<@org.jetbrains.annotations.Nullable String, String> renamer) {
         getMainSpec().rename(renamer);
         return this;
     }
@@ -506,7 +525,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      * {@inheritDoc}
      */
     @Override
-    public AbstractCopyTask filter(Transformer<String, String> transformer) {
+    public AbstractCopyTask filter(Transformer<@org.jetbrains.annotations.Nullable String, String> transformer) {
         getMainSpec().filter(transformer);
         return this;
     }
@@ -534,6 +553,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @Deprecated
     public Integer getDirMode() {
         return getMainSpec().getDirMode();
     }
@@ -543,6 +563,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @Deprecated
     public Integer getFileMode() {
         return getMainSpec().getFileMode();
     }
@@ -551,6 +572,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      * {@inheritDoc}
      */
     @Override
+    @Deprecated
     public AbstractCopyTask setDirMode(@Nullable Integer mode) {
         getMainSpec().setDirMode(mode);
         return this;
@@ -560,9 +582,44 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      * {@inheritDoc}
      */
     @Override
+    @Deprecated
     public AbstractCopyTask setFileMode(@Nullable Integer mode) {
         getMainSpec().setFileMode(mode);
         return this;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Internal
+    public Property<ConfigurableFilePermissions> getFilePermissions() {
+        return getMainSpec().getFilePermissions();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public CopyProcessingSpec filePermissions(Action<? super ConfigurableFilePermissions> configureAction) {
+        return getMainSpec().filePermissions(configureAction);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Internal
+    public Property<ConfigurableFilePermissions> getDirPermissions() {
+        return getMainSpec().getDirPermissions();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public CopyProcessingSpec dirPermissions(Action<? super ConfigurableFilePermissions> configureAction) {
+        return getMainSpec().dirPermissions(configureAction);
     }
 
     /**
@@ -588,6 +645,7 @@ public abstract class AbstractCopyTask extends ConventionTask implements CopySpe
      */
     @Internal
     @Override
+    @ToBeReplacedByLazyProperty
     public String getFilteringCharset() {
         return getMainSpec().getFilteringCharset();
     }

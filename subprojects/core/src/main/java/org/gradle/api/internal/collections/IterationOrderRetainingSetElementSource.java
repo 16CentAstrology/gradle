@@ -21,39 +21,42 @@ import org.gradle.api.internal.provider.CollectionProviderInternal;
 import org.gradle.api.internal.provider.ProviderInternal;
 import org.gradle.api.specs.Spec;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
 public class IterationOrderRetainingSetElementSource<T> extends AbstractIterationOrderRetainingElementSource<T> {
-    private final Spec<ValuePointer<T>> noDuplicates = new Spec<ValuePointer<T>>() {
-        @Override
-        public boolean isSatisfiedBy(ValuePointer<T> pointer) {
-            return !pointer.getElement().isDuplicate(pointer.getIndex());
-        }
-    };
+    private static final Spec<ValuePointer<?>> NO_DUPLICATES = pointer -> !pointer.getElement().isDuplicate(pointer.getIndex());
 
     /**
      * Tracks the subset of values added with add() (without a Provider), allowing us to filter out duplicates
      * from that subset in constant time.
      */
-    private final Set<T> nonProvidedValues = new HashSet<>();
+    private Set<T> nonProvidedValues = Collections.emptySet();
+
+    private void ensureNonProviderValuesMutable() {
+        if (nonProvidedValues == Collections.EMPTY_SET) {
+            nonProvidedValues = new HashSet<T>();
+        }
+    }
 
     @Override
     public Iterator<T> iterator() {
         realizePending();
-        return new RealizedElementCollectionIterator(getInserted(), noDuplicates);
+        return new RealizedElementCollectionIterator(getInserted(), NO_DUPLICATES);
     }
 
     @Override
     public Iterator<T> iteratorNoFlush() {
-        return new RealizedElementCollectionIterator(getInserted(), noDuplicates);
+        return new RealizedElementCollectionIterator(getInserted(), NO_DUPLICATES);
     }
 
     @Override
     public boolean add(T element) {
         modCount++;
+        ensureNonProviderValuesMutable();
         if (nonProvidedValues.add(element)) {
             getInserted().add(new Element<T>(element));
             return true;
@@ -87,7 +90,7 @@ public class IterationOrderRetainingSetElementSource<T> extends AbstractIteratio
 
     @Override
     public void clear() {
-        nonProvidedValues.clear();
+        nonProvidedValues = Collections.emptySet();
         super.clear();
     }
 
@@ -114,7 +117,7 @@ public class IterationOrderRetainingSetElementSource<T> extends AbstractIteratio
         modCount++;
         Element<T> element = cachingElement(provider);
         if (!getInserted().contains(element)) {
-            getInserted().add(element);
+            addPendingElement(element);
             return true;
         } else {
             return false;
@@ -126,7 +129,7 @@ public class IterationOrderRetainingSetElementSource<T> extends AbstractIteratio
         modCount++;
         Element<T> element = cachingElement(provider);
         if (!getInserted().contains(element)) {
-            getInserted().add(element);
+            addPendingElement(element);
             return true;
         } else {
             return false;

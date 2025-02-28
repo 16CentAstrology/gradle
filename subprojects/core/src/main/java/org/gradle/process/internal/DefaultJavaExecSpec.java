@@ -21,6 +21,7 @@ import org.gradle.api.file.FileCollection;
 import org.gradle.api.internal.file.FileCollectionFactory;
 import org.gradle.api.jvm.ModularitySpec;
 import org.gradle.api.model.ObjectFactory;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.internal.file.PathToFileResolver;
 import org.gradle.internal.jvm.DefaultModularitySpec;
@@ -45,6 +46,7 @@ public class DefaultJavaExecSpec extends DefaultJavaForkOptions implements JavaE
     private final Property<String> mainClass;
     private final Property<String> mainModule;
     private final ModularitySpec modularity;
+    private final ListProperty<String> jvmArguments;
 
     private final FileCollectionFactory fileCollectionFactory;
     private ConfigurableFileCollection classpath;
@@ -55,7 +57,8 @@ public class DefaultJavaExecSpec extends DefaultJavaForkOptions implements JavaE
         PathToFileResolver resolver,
         FileCollectionFactory fileCollectionFactory
     ) {
-        super(resolver, fileCollectionFactory, objectFactory.newInstance(DefaultJavaDebugOptions.class));
+        super(objectFactory, resolver, fileCollectionFactory);
+        this.jvmArguments = objectFactory.listProperty(String.class);
         this.mainClass = objectFactory.property(String.class);
         this.mainModule = objectFactory.property(String.class);
         this.modularity = objectFactory.newInstance(DefaultModularitySpec.class);
@@ -177,6 +180,11 @@ public class DefaultJavaExecSpec extends DefaultJavaForkOptions implements JavaE
     public JavaExecSpec setErrorOutput(OutputStream errorOutput) {
         streamsSpec.setErrorOutput(errorOutput);
         return this;
+    }
+
+    @Override
+    public ListProperty<String> getJvmArguments() {
+        return jvmArguments;
     }
 
     @Override

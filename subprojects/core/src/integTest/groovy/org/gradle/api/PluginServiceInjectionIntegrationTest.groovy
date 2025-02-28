@@ -16,8 +16,10 @@
 
 package org.gradle.api
 
+import org.gradle.api.artifacts.ConfigurationContainer
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.file.ProjectLayout
+import org.gradle.api.internal.artifacts.configurations.RoleBasedConfigurationContainerInternal
 import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.ProviderFactory
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
@@ -130,10 +132,9 @@ class PluginServiceInjectionIntegrationTest extends AbstractIntegrationSpec {
                 void apply(Project p) {
                     println(executor != null ? "got it" : "NOT IT")
 
-                    // is generated but not extensible
+                    // is generated
                     assert getClass() != CustomPlugin
                     assert (this instanceof org.gradle.api.internal.GeneratedSubclass)
-                    assert !(this instanceof ExtensionAware)
                 }
             }
 
@@ -175,6 +176,8 @@ class PluginServiceInjectionIntegrationTest extends AbstractIntegrationSpec {
             ExecutionEngine,
             FileSystemOperations,
             ExecOperations,
+            ConfigurationContainer, // this is a supertype of the RoleBasedConfigurationContainerInternal, we want to ensure it can still be injected without asking for the subtype
+            RoleBasedConfigurationContainerInternal
         ].collect { it.name }
     }
 

@@ -58,6 +58,7 @@ import org.gradle.internal.execution.impl.DefaultFileCollectionFingerprinterRegi
 import org.gradle.internal.execution.impl.DefaultInputFingerprinter;
 import org.gradle.internal.execution.impl.DefaultOutputSnapshotter;
 import org.gradle.internal.file.DefaultFileSystemDefaultExcludesProvider;
+import org.gradle.internal.file.FileMetadataAccessor;
 import org.gradle.internal.file.FileSystemDefaultExcludesProvider;
 import org.gradle.internal.file.Stat;
 import org.gradle.internal.fingerprint.LineEndingSensitivity;
@@ -71,9 +72,13 @@ import org.gradle.internal.hash.HashCode;
 import org.gradle.internal.hash.StreamHasher;
 import org.gradle.internal.nativeintegration.NativeCapabilities;
 import org.gradle.internal.nativeintegration.filesystem.FileSystem;
+import org.gradle.internal.nativeintegration.services.NativeServices;
 import org.gradle.internal.os.OperatingSystem;
 import org.gradle.internal.serialize.HashCodeSerializer;
+import org.gradle.internal.service.PrivateService;
+import org.gradle.internal.service.Provides;
 import org.gradle.internal.service.ServiceRegistration;
+import org.gradle.internal.service.ServiceRegistrationProvider;
 import org.gradle.internal.snapshot.CaseSensitivity;
 import org.gradle.internal.snapshot.SnapshotHierarchy;
 import org.gradle.internal.snapshot.ValueSnapshotter;
@@ -90,11 +95,9 @@ import org.gradle.internal.watch.vfs.BuildLifecycleAwareVirtualFileSystem;
 import org.gradle.internal.watch.vfs.FileChangeListeners;
 import org.gradle.internal.watch.vfs.WatchableFileSystemDetector;
 import org.gradle.internal.watch.vfs.impl.DefaultWatchableFileSystemDetector;
-import org.gradle.internal.watch.vfs.impl.LocationsWrittenByCurrentBuild;
+import org.gradle.internal.watch.vfs.impl.FileWatchingFilter;
 import org.gradle.internal.watch.vfs.impl.WatchingNotSupportedVirtualFileSystem;
 import org.gradle.internal.watch.vfs.impl.WatchingVirtualFileSystem;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.Optional;
@@ -103,9 +106,7 @@ import java.util.function.Predicate;
 import static org.gradle.internal.snapshot.CaseSensitivity.CASE_INSENSITIVE;
 import static org.gradle.internal.snapshot.CaseSensitivity.CASE_SENSITIVE;
 
-public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(VirtualFileSystemServices.class);
+public class VirtualFileSystemServices extends AbstractGradleModuleServices {
 
     /**
      * When file system watching is enabled, this system property can be used to invalidate the entire VFS.
@@ -140,23 +141,28 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
         registration.addProvider(new BuildSessionServices());
     }
 
-    private static class GlobalScopeServices {
+    private static class GlobalScopeServices implements ServiceRegistrationProvider {
+        @Provides
         FileHasherStatistics.Collector createCachingFileHasherStatisticsCollector() {
             return new FileHasherStatistics.Collector();
         }
 
+        @Provides
         DirectorySnapshotterStatistics.Collector createDirectorySnapshotterStatisticsCollector() {
             return new DirectorySnapshotterStatistics.Collector();
         }
     }
 
     @VisibleForTesting
-    static class GradleUserHomeServices {
+    static class GradleUserHomeServices implements ServiceRegistrationProvider {
 
+        @Provides
+        @PrivateService
         CrossBuildFileHashCache createCrossBuildFileHashCache(GlobalScopedCacheBuilderFactory cacheBuilderFactory, InMemoryCacheDecoratorFactory inMemoryCacheDecoratorFactory) {
             return new CrossBuildFileHashCache(cacheBuilderFactory, inMemoryCacheDecoratorFactory, CrossBuildFileHashCache.Kind.FILE_HASHES);
         }
 
+        @Provides
         FileHasher createCachingFileHasher(
             FileHasherStatistics.Collector statisticsCollector,
             CrossBuildFileHashCache fileStore,
@@ -170,51 +176,54 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return fileHasher;
         }
 
-        LocationsWrittenByCurrentBuild createLocationsUpdatedByCurrentBuild(ListenerManager listenerManager) {
-            LocationsWrittenByCurrentBuild locationsWrittenByCurrentBuild = new LocationsWrittenByCurrentBuild();
+        @Provides
+        FileWatchingFilter createFileWatchingFilter(GlobalCacheLocations globalCacheLocations, ListenerManager listenerManager) {
+            // All the changes in global caches should be done by Gradle itself, so in order
+            // to minimize the number of watches we don't watch anything within the global caches.
+            FileWatchingFilter fileWatchingFilter = new FileWatchingFilter(globalCacheLocations.getCacheRoots());
             listenerManager.addListener(new RootBuildLifecycleListener() {
                 @Override
                 public void afterStart() {
-                    locationsWrittenByCurrentBuild.buildStarted();
+                    fileWatchingFilter.buildStarted();
                 }
 
                 @Override
                 public void beforeComplete() {
-                    locationsWrittenByCurrentBuild.buildFinished();
+                    fileWatchingFilter.buildFinished();
                 }
             });
-            return locationsWrittenByCurrentBuild;
+            return fileWatchingFilter;
         }
 
+        @Provides
         WatchableFileSystemDetector createWatchableFileSystemDetector(FileSystems fileSystems) {
             return new DefaultWatchableFileSystemDetector(fileSystems);
         }
 
+        @Provides
         BuildLifecycleAwareVirtualFileSystem createVirtualFileSystem(
-            LocationsWrittenByCurrentBuild locationsWrittenByCurrentBuild,
+            FileWatchingFilter fileWatchingFilter,
             DocumentationRegistry documentationRegistry,
             NativeCapabilities nativeCapabilities,
             ListenerManager listenerManager,
             FileChangeListeners fileChangeListeners,
+            NativeServices.FileEventFunctionsProvider fileEvents,
             FileSystem fileSystem,
-            GlobalCacheLocations globalCacheLocations,
             WatchableFileSystemDetector watchableFileSystemDetector
         ) {
             CaseSensitivity caseSensitivity = fileSystem.isCaseSensitive() ? CASE_SENSITIVE : CASE_INSENSITIVE;
             SnapshotHierarchy root = DefaultSnapshotHierarchy.empty(caseSensitivity);
-            // All the changes in global caches should be done by Gradle itself, so in order
-            // to minimize the number of watches we don't watch anything within the global caches.
-            Predicate<String> watchFilter = path -> !globalCacheLocations.isInsideGlobalCache(path);
 
             BuildLifecycleAwareVirtualFileSystem virtualFileSystem = determineWatcherRegistryFactory(
                 OperatingSystem.current(),
                 nativeCapabilities,
-                watchFilter)
+                fileEvents,
+                fileWatchingFilter.getImmutableLocations()::contains)
                 .<BuildLifecycleAwareVirtualFileSystem>map(watcherRegistryFactory -> new WatchingVirtualFileSystem(
                     watcherRegistryFactory,
                     root,
-                    sectionId -> documentationRegistry.getDocumentationFor("gradle_daemon", sectionId),
-                    locationsWrittenByCurrentBuild,
+                    sectionId -> documentationRegistry.getDocumentationRecommendationFor("details", "file_system_watching", sectionId),
+                    fileWatchingFilter,
                     watchableFileSystemDetector,
                     fileChangeListeners
                 ))
@@ -227,10 +236,11 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return virtualFileSystem;
         }
 
+        @Provides
         FileSystemAccess createFileSystemAccess(
             FileHasher hasher,
             VirtualFileSystem virtualFileSystem,
-            Stat stat,
+            FileMetadataAccessor stat,
             StringInterner stringInterner,
             FileSystemAccess.WriteListener writeListener,
             DirectorySnapshotterStatistics.Collector statisticsCollector,
@@ -250,31 +260,34 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return defaultFileSystemAccess;
         }
 
-        private Optional<FileWatcherRegistryFactory> determineWatcherRegistryFactory(
+        private static Optional<FileWatcherRegistryFactory> determineWatcherRegistryFactory(
             OperatingSystem operatingSystem,
             NativeCapabilities nativeCapabilities,
-            Predicate<String> watchFilter
+            NativeServices.FileEventFunctionsProvider fileEvents,
+            Predicate<String> immutableLocationsFilter
         ) {
             if (nativeCapabilities.useFileSystemWatching()) {
                 try {
                     if (operatingSystem.isMacOsX()) {
-                        return Optional.of(new DarwinFileWatcherRegistryFactory(watchFilter));
+                        return Optional.of(new DarwinFileWatcherRegistryFactory(fileEvents::getFunctions, immutableLocationsFilter));
                     } else if (operatingSystem.isWindows()) {
-                        return Optional.of(new WindowsFileWatcherRegistryFactory(watchFilter));
+                        return Optional.of(new WindowsFileWatcherRegistryFactory(fileEvents::getFunctions, immutableLocationsFilter));
                     } else if (operatingSystem.isLinux()) {
-                        return Optional.of(new LinuxFileWatcherRegistryFactory(watchFilter));
+                        return Optional.of(new LinuxFileWatcherRegistryFactory(fileEvents::getFunctions, immutableLocationsFilter));
                     }
                 } catch (NativeIntegrationUnavailableException e) {
-                    LOGGER.debug("Native file system watching is not available for this operating system.", e);
+                    NativeServices.logFileSystemWatchingUnavailable(e);
                 }
             }
             return Optional.empty();
         }
 
+        @Provides
         FileCollectionSnapshotter createFileCollectionSnapshotter(FileSystemAccess fileSystemAccess, Stat stat) {
             return new DefaultFileCollectionSnapshotter(fileSystemAccess, stat);
         }
 
+        @Provides
         ResourceSnapshotterCacheService createResourceSnapshotterCacheService(CrossBuildFileHashCache store) {
             IndexedCache<HashCode, HashCode> resourceHashesCache = store.createIndexedCache(
                 IndexedCacheParameters.of("resourceHashesCache", HashCode.class, new HashCodeSerializer()),
@@ -283,31 +296,37 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return new DefaultResourceSnapshotterCacheService(resourceHashesCache);
         }
 
+        @Provides
         ClasspathFingerprinter createClasspathFingerprinter(ResourceSnapshotterCacheService resourceSnapshotterCacheService, FileCollectionSnapshotter fileCollectionSnapshotter, StringInterner stringInterner) {
             return new DefaultClasspathFingerprinter(resourceSnapshotterCacheService, fileCollectionSnapshotter, ResourceFilter.FILTER_NOTHING, ResourceEntryFilter.FILTER_NOTHING, PropertiesFileFilter.FILTER_NOTHING, stringInterner, LineEndingSensitivity.DEFAULT);
         }
 
+        @Provides
         ClasspathHasher createClasspathHasher(ClasspathFingerprinter fingerprinter, FileCollectionFactory fileCollectionFactory) {
             return new DefaultClasspathHasher(fingerprinter, fileCollectionFactory);
         }
 
+        @Provides
         FileChangeListeners createFileChangeListeners(ListenerManager listenerManager) {
             return new DefaultFileChangeListeners(listenerManager);
         }
-
     }
 
     @VisibleForTesting
-    static class BuildSessionServices {
+    static class BuildSessionServices implements ServiceRegistrationProvider {
 
+        @Provides
         FileSystemDefaultExcludesProvider createFileSystemDefaultExcludesProvider(ListenerManager listenerManager) {
             return new DefaultFileSystemDefaultExcludesProvider(listenerManager);
         }
 
+        @Provides
+        @PrivateService
         CrossBuildFileHashCache createCrossBuildFileHashCache(BuildTreeScopedCacheBuilderFactory cacheBuilderFactory, InMemoryCacheDecoratorFactory inMemoryCacheDecoratorFactory) {
             return new CrossBuildFileHashCache(cacheBuilderFactory, inMemoryCacheDecoratorFactory, CrossBuildFileHashCache.Kind.FILE_HASHES);
         }
 
+        @Provides
         FileHasher createFileHasher(
             GlobalCacheLocations globalCacheLocations,
             BuildSessionScopeFileTimeStampInspector fileTimeStampInspector,
@@ -322,10 +341,11 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return new SplitFileHasher(globalHasher, localHasher, globalCacheLocations);
         }
 
+        @Provides
         FileSystemAccess createFileSystemAccess(
             FileHasher hasher,
             ListenerManager listenerManager,
-            Stat stat,
+            FileMetadataAccessor stat,
             StringInterner stringInterner,
             VirtualFileSystem root,
             FileSystemAccess.WriteListener writeListener,
@@ -342,20 +362,22 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             );
 
             listenerManager.addListener(buildSessionsScopedVirtualFileSystem);
-            listenerManager.addListener((OutputChangeListener) affectedOutputPaths -> buildSessionsScopedVirtualFileSystem.write(affectedOutputPaths, () -> {
-            }));
+            listenerManager.addListener((OutputChangeListener) buildSessionsScopedVirtualFileSystem::invalidate);
 
             return buildSessionsScopedVirtualFileSystem;
         }
 
+        @Provides
         FileCollectionSnapshotter createFileCollectionSnapshotter(FileSystemAccess fileSystemAccess, Stat stat) {
             return new DefaultFileCollectionSnapshotter(fileSystemAccess, stat);
         }
 
+        @Provides
         OutputSnapshotter createOutputSnapshotter(FileCollectionSnapshotter fileCollectionSnapshotter) {
             return new DefaultOutputSnapshotter(fileCollectionSnapshotter);
         }
 
+        @Provides
         FileCollectionFingerprinterRegistrations createFileCollectionFingerprinterRegistrations(
             StringInterner stringInterner,
             FileCollectionSnapshotter fileCollectionSnapshotter,
@@ -371,10 +393,12 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             );
         }
 
+        @Provides
         FileCollectionFingerprinterRegistry createFileCollectionFingerprinterRegistry(FileCollectionFingerprinterRegistrations fileCollectionFingerprinterRegistrations) {
             return new DefaultFileCollectionFingerprinterRegistry(fileCollectionFingerprinterRegistrations.getRegistrants());
         }
 
+        @Provides
         InputFingerprinter createInputFingerprinter(
             FileCollectionSnapshotter snapshotter,
             FileCollectionFingerprinterRegistry fingerprinterRegistry,
@@ -383,6 +407,7 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return new DefaultInputFingerprinter(snapshotter, fingerprinterRegistry, valueSnapshotter);
         }
 
+        @Provides
         ResourceSnapshotterCacheService createResourceSnapshotterCacheService(
             GlobalCacheLocations globalCacheLocations,
             CrossBuildFileHashCache store,
@@ -393,8 +418,4 @@ public class VirtualFileSystemServices extends AbstractPluginServiceRegistry {
             return new SplitResourceSnapshotterCacheService(globalCache, localCache, globalCacheLocations);
         }
     }
-
-    interface WatchFilter extends Predicate<String> {
-    }
-
 }

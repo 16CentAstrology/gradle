@@ -25,6 +25,7 @@ import org.gradle.api.NamedDomainObjectFactory;
 import org.gradle.api.NamedDomainObjectList;
 import org.gradle.api.NamedDomainObjectSet;
 import org.gradle.api.artifacts.ExternalModuleDependencyBundle;
+import org.gradle.api.artifacts.dsl.DependencyCollector;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.ConfigurableFileTree;
 import org.gradle.api.file.Directory;
@@ -32,6 +33,7 @@ import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFile;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.file.SourceDirectorySet;
+import org.gradle.api.internal.artifacts.dsl.dependencies.DefaultDependencyCollector;
 import org.gradle.api.internal.collections.DomainObjectCollectionFactory;
 import org.gradle.api.internal.file.DefaultSourceDirectorySet;
 import org.gradle.api.internal.file.FileCollectionFactory;
@@ -48,14 +50,15 @@ import org.gradle.api.reflect.ObjectInstantiationException;
 import org.gradle.api.tasks.util.PatternSet;
 import org.gradle.internal.Cast;
 import org.gradle.internal.Factory;
+import org.gradle.internal.model.BuildTreeObjectFactory;
 import org.gradle.internal.reflect.Instantiator;
-import org.gradle.internal.reflect.JavaReflectionUtil;
+import org.gradle.model.internal.asm.AsmClassGeneratorUtils;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class DefaultObjectFactory implements ObjectFactory {
+public class DefaultObjectFactory implements ObjectFactory, BuildTreeObjectFactory {
     private final Instantiator instantiator;
     private final NamedObjectInstantiator namedObjectInstantiator;
     private final DirectoryFileTreeFactory directoryFileTreeFactory;
@@ -115,6 +118,11 @@ public class DefaultObjectFactory implements ObjectFactory {
     }
 
     @Override
+    public DependencyCollector dependencyCollector() {
+        return newInstance(DefaultDependencyCollector.class);
+    }
+
+    @Override
     public <T> NamedDomainObjectContainer<T> domainObjectContainer(Class<T> elementType) {
         return domainObjectCollectionFactory.newNamedDomainObjectContainer(elementType);
     }
@@ -152,7 +160,7 @@ public class DefaultObjectFactory implements ObjectFactory {
 
         if (valueType.isPrimitive()) {
             // Kotlin passes these types for its own basic types
-            return Cast.uncheckedNonnullCast(property(JavaReflectionUtil.getWrapperTypeForPrimitiveType(valueType)));
+            return Cast.uncheckedNonnullCast(property(AsmClassGeneratorUtils.getWrapperTypeForPrimitiveType(valueType)));
         }
 
         if (List.class.isAssignableFrom(valueType)) {
@@ -182,7 +190,7 @@ public class DefaultObjectFactory implements ObjectFactory {
     public <T> ListProperty<T> listProperty(Class<T> elementType) {
         if (elementType.isPrimitive()) {
             // Kotlin passes these types for its own basic types
-            return Cast.uncheckedNonnullCast(listProperty(JavaReflectionUtil.getWrapperTypeForPrimitiveType(elementType)));
+            return Cast.uncheckedNonnullCast(listProperty(AsmClassGeneratorUtils.getWrapperTypeForPrimitiveType(elementType)));
         }
         return propertyFactory.listProperty(elementType);
     }
@@ -191,7 +199,7 @@ public class DefaultObjectFactory implements ObjectFactory {
     public <T> SetProperty<T> setProperty(Class<T> elementType) {
         if (elementType.isPrimitive()) {
             // Kotlin passes these types for its own basic types
-            return Cast.uncheckedNonnullCast(setProperty(JavaReflectionUtil.getWrapperTypeForPrimitiveType(elementType)));
+            return Cast.uncheckedNonnullCast(setProperty(AsmClassGeneratorUtils.getWrapperTypeForPrimitiveType(elementType)));
         }
         return propertyFactory.setProperty(elementType);
     }
@@ -200,11 +208,11 @@ public class DefaultObjectFactory implements ObjectFactory {
     public <K, V> MapProperty<K, V> mapProperty(Class<K> keyType, Class<V> valueType) {
         if (keyType.isPrimitive()) {
             // Kotlin passes these types for its own basic types
-            return Cast.uncheckedNonnullCast(mapProperty(JavaReflectionUtil.getWrapperTypeForPrimitiveType(keyType), valueType));
+            return Cast.uncheckedNonnullCast(mapProperty(AsmClassGeneratorUtils.getWrapperTypeForPrimitiveType(keyType), valueType));
         }
         if (valueType.isPrimitive()) {
             // Kotlin passes these types for its own basic types
-            return Cast.uncheckedNonnullCast(mapProperty(keyType, JavaReflectionUtil.getWrapperTypeForPrimitiveType(valueType)));
+            return Cast.uncheckedNonnullCast(mapProperty(keyType, AsmClassGeneratorUtils.getWrapperTypeForPrimitiveType(valueType)));
         }
         return propertyFactory.mapProperty(keyType, valueType);
     }

@@ -19,7 +19,9 @@ import com.google.common.annotations.VisibleForTesting;
 import org.gradle.api.Task;
 import org.gradle.api.internal.TaskInternal;
 import org.gradle.api.specs.Spec;
+import org.gradle.execution.EntryTaskSelector;
 import org.gradle.execution.plan.PlanExecutor;
+import org.gradle.execution.plan.QueryableExecutionPlan;
 import org.gradle.internal.build.BuildLifecycleController;
 import org.gradle.internal.build.BuildState;
 import org.gradle.internal.build.BuildStateRegistry;
@@ -32,7 +34,7 @@ import org.gradle.internal.concurrent.ExecutorFactory;
 import org.gradle.internal.concurrent.ManagedExecutor;
 import org.gradle.internal.operations.BuildOperationContext;
 import org.gradle.internal.operations.BuildOperationDescriptor;
-import org.gradle.internal.operations.BuildOperationExecutor;
+import org.gradle.internal.operations.BuildOperationRunner;
 import org.gradle.internal.operations.RunnableBuildOperation;
 import org.gradle.internal.taskgraph.CalculateTreeTaskGraphBuildOperationType;
 import org.gradle.internal.work.WorkerLeaseService;
@@ -42,6 +44,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -52,7 +55,7 @@ public class DefaultIncludedBuildTaskGraph implements BuildTreeWorkGraphControll
     }
 
     private static final int MONITORING_POLL_TIME = 30;
-    private final BuildOperationExecutor buildOperationExecutor;
+    private final BuildOperationRunner buildOperationRunner;
     private final BuildStateRegistry buildRegistry;
     private final WorkerLeaseService workerLeaseService;
     private final PlanExecutor planExecutor;
@@ -65,19 +68,19 @@ public class DefaultIncludedBuildTaskGraph implements BuildTreeWorkGraphControll
     @Inject
     public DefaultIncludedBuildTaskGraph(
         ExecutorFactory executorFactory,
-        BuildOperationExecutor buildOperationExecutor,
+        BuildOperationRunner buildOperationRunner,
         BuildStateRegistry buildRegistry,
         WorkerLeaseService workerLeaseService,
         PlanExecutor planExecutor,
         BuildTreeWorkGraphPreparer workGraphPreparer
     ) {
-        this(executorFactory, buildOperationExecutor, buildRegistry, workerLeaseService, planExecutor, workGraphPreparer, MONITORING_POLL_TIME, TimeUnit.SECONDS);
+        this(executorFactory, buildOperationRunner, buildRegistry, workerLeaseService, planExecutor, workGraphPreparer, MONITORING_POLL_TIME, TimeUnit.SECONDS);
     }
 
     @VisibleForTesting
     DefaultIncludedBuildTaskGraph(
         ExecutorFactory executorFactory,
-        BuildOperationExecutor buildOperationExecutor,
+        BuildOperationRunner buildOperationRunner,
         BuildStateRegistry buildRegistry,
         WorkerLeaseService workerLeaseService,
         PlanExecutor planExecutor,
@@ -85,7 +88,7 @@ public class DefaultIncludedBuildTaskGraph implements BuildTreeWorkGraphControll
         int monitoringPollTime,
         TimeUnit monitoringPollTimeUnit
     ) {
-        this.buildOperationExecutor = buildOperationExecutor;
+        this.buildOperationRunner = buildOperationRunner;
         this.buildRegistry = buildRegistry;
         this.executorService = executorFactory.create("included builds");
         this.workerLeaseService = workerLeaseService;
@@ -147,12 +150,17 @@ public class DefaultIncludedBuildTaskGraph implements BuildTreeWorkGraphControll
 
         @Override
         public void withWorkGraph(BuildState target, Consumer<? super BuildLifecycleController.WorkGraphBuilder> action) {
-            owner.controllers.getBuildController(target).populateWorkGraph(action);
+            buildControllerOf(target).populateWorkGraph(action);
         }
 
         @Override
         public void addFilter(BuildState target, Spec<Task> filter) {
-            owner.controllers.getBuildController(target).addFilter(filter);
+            buildControllerOf(target).addFilter(filter);
+        }
+
+        @Override
+        public void addFinalization(BuildState target, BiConsumer<EntryTaskSelector.Context, QueryableExecutionPlan> finalization) {
+            buildControllerOf(target).addFinalization(finalization);
         }
 
         @Override
@@ -165,6 +173,10 @@ public class DefaultIncludedBuildTaskGraph implements BuildTreeWorkGraphControll
                 }
                 locateTask(identifier).queueForExecution();
             }
+        }
+
+        private BuildController buildControllerOf(BuildState target) {
+            return owner.controllers.getBuildController(target);
         }
     }
 
@@ -189,7 +201,7 @@ public class DefaultIncludedBuildTaskGraph implements BuildTreeWorkGraphControll
             assertIsOwner();
             expectInState(State.NotPrepared);
             state = State.Preparing;
-            buildOperationExecutor.run(new RunnableBuildOperation() {
+            buildOperationRunner.run(new RunnableBuildOperation() {
                 @Override
                 public void run(BuildOperationContext context) {
                     DefaultBuildTreeWorkGraphBuilder graphBuilder = new DefaultBuildTreeWorkGraphBuilder(DefaultBuildTreeWorkGraph.this);

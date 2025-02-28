@@ -23,12 +23,18 @@ import org.gradle.api.file.FileCollection;
 import org.gradle.internal.HasInternalProtocol;
 
 /**
- * A set of {@link Dependency} objects which can be resolved to a set of files. There are various methods on this type that you can use to get the result in different forms:
+ * The primary view of the results of resolving a {@link Configuration}. Results can be obtained in several forms, each catering to different use cases:
  *
  * <ul>
  *     <li>{@link #getFiles()} returns a {@link FileCollection} that provides the result as a set of {@link java.io.File} instances.</li>
- *     <li>{@link #getResolutionResult()} returns a {@link ResolutionResult} that provides information about the dependency graph.</li>
+ *     <li>{@link #getResolutionResult()} returns a {@link ResolutionResult} that provides information about the dependency graph without downloading artifacts.</li>
  *     <li>{@link #getArtifacts()} returns an {@link ArtifactCollection} that provides the files with additional metadata.</li>
+ *     <li>
+ *         {@link #artifactView(Action)} provides several APIs, which can perform lenient artifact resolution,
+ *         trigger artifact transforms, or filter artifacts. Furthermore, artifact views can be used to
+ *         perform variant re-selection, allowing sources and javadoc artifacts to be selected from a graph,
+ *         among other things.
+ *     </li>
  * </ul>
  *
  * <p>The dependencies are resolved once only, when the result is first requested. The result is reused and returned for subsequent calls. Once resolved, any mutation to the dependencies will result in an error.</p>
@@ -104,7 +110,11 @@ public interface ResolvableDependencies extends ArtifactView {
     void afterResolve(@DelegatesTo(ResolvableDependencies.class) Closure action);
 
     /**
-     * Returns the resolved dependency graph, performing the resolution if required. This will resolve the dependency graph but will not resolve or download the files.
+     * Returns the resolved dependency graph, performing the resolution lazily.
+     *
+     * <p>The lazy aspect depends on what is done with the returned {@code ResolutionResult}.</p>
+     *
+     * This will resolve the dependency graph but will not resolve or download the artifacts.
      *
      * <p>You should note that when resolution fails, the exceptions are included in the {@link ResolutionResult} returned from this method. This method will not throw these exceptions.</p>
      *

@@ -43,9 +43,18 @@ public class DefaultWorkerProcessFactory implements WorkerProcessFactory {
     private final MemoryManager memoryManager;
     private int connectTimeoutSeconds = 120;
 
-    public DefaultWorkerProcessFactory(LoggingManager loggingManager, MessagingServer server, ClassPathRegistry classPathRegistry, IdGenerator<Long> idGenerator,
-                                       File gradleUserHomeDir, TemporaryFileProvider temporaryFileProvider, JavaExecHandleFactory execHandleFactory,
-                                       JvmVersionDetector jvmVersionDetector, OutputEventListener outputEventListener, MemoryManager memoryManager) {
+    public DefaultWorkerProcessFactory(
+        LoggingManager loggingManager,
+        MessagingServer server,
+        ClassPathRegistry classPathRegistry,
+        IdGenerator<Long> idGenerator,
+        File gradleUserHomeDir,
+        TemporaryFileProvider temporaryFileProvider,
+        JavaExecHandleFactory execHandleFactory,
+        JvmVersionDetector jvmVersionDetector,
+        OutputEventListener outputEventListener,
+        MemoryManager memoryManager
+    ) {
         this.loggingManager = loggingManager;
         this.server = server;
         this.idGenerator = idGenerator;
@@ -66,11 +75,6 @@ public class DefaultWorkerProcessFactory implements WorkerProcessFactory {
         builder.worker(workerAction);
         builder.setImplementationClasspath(ClasspathUtil.getClasspath(workerAction.getClass().getClassLoader()).getAsURLs());
         return builder;
-    }
-
-    @Override
-    public <IN, OUT> SingleRequestWorkerProcessBuilder<IN, OUT> singleRequestWorker(Class<? extends RequestHandler<? super IN, ? extends OUT>> workerImplementation) {
-        return new DefaultSingleRequestWorkerProcessBuilder<>(workerImplementation, newWorkerProcessBuilder(), outputEventListener);
     }
 
     @Override

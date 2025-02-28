@@ -15,23 +15,46 @@
  */
 package org.gradle.process;
 
+import org.gradle.api.Incubating;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.jvm.ModularitySpec;
 import org.gradle.api.model.ReplacedBy;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.Nested;
 import org.gradle.api.tasks.Optional;
 import org.gradle.internal.deprecation.DeprecationLogger;
+import org.gradle.internal.instrumentation.api.annotations.ReplacedAccessor;
+import org.gradle.internal.instrumentation.api.annotations.ReplacedAccessor.AccessorType;
+import org.gradle.internal.instrumentation.api.annotations.ReplacedDeprecation;
+import org.gradle.internal.instrumentation.api.annotations.ReplacedDeprecation.RemovedIn;
+import org.gradle.internal.instrumentation.api.annotations.ReplacesEagerProperty;
+import org.gradle.internal.instrumentation.api.annotations.ToBeReplacedByLazyProperty;
 
 import javax.annotation.Nullable;
 import java.util.List;
+
+import static org.gradle.internal.instrumentation.api.annotations.ReplacesEagerProperty.BinaryCompatibility.ACCESSORS_KEPT;
 
 /**
  * Specifies the options for executing a Java application.
  */
 public interface JavaExecSpec extends JavaForkOptions, BaseExecSpec {
+
+    /**
+     * Extra JVM arguments to be to use to launch the JVM for the process.
+     *
+     * Must be used to set a convention for JVM arguments.
+     *
+     * @since 8.1
+     */
+    @Incubating
+    @Optional
+    @Internal
+    ListProperty<String> getJvmArguments();
 
     /**
      * The name of the main module to be executed if the application should run as a Java module.
@@ -46,12 +69,16 @@ public interface JavaExecSpec extends JavaForkOptions, BaseExecSpec {
      * The fully qualified name of the Main class to be executed.
      * <p>
      * This does not need to be set if using an <a href="https://docs.oracle.com/javase/tutorial/deployment/jar/appman.html">Executable Jar</a> with a {@code Main-Class} attribute.
-     * <p>
      *
      * @since 6.4
      */
     @Optional
     @Input
+    @ReplacesEagerProperty(
+        replacedAccessors = @ReplacedAccessor(value = AccessorType.SETTER, name = "setMain", fluentSetter = true),
+        binaryCompatibility = ACCESSORS_KEPT,
+        deprecation = @ReplacedDeprecation(removedIn = RemovedIn.GRADLE9, withDslReference = true)
+    )
     Property<String> getMainClass();
 
     /**
@@ -79,6 +106,7 @@ public interface JavaExecSpec extends JavaForkOptions, BaseExecSpec {
     /**
      * Returns the arguments passed to the main class to be executed.
      */
+    @ToBeReplacedByLazyProperty
     @Nullable @Optional @Input
     List<String> getArgs();
 
@@ -125,6 +153,7 @@ public interface JavaExecSpec extends JavaForkOptions, BaseExecSpec {
      * @since 4.6
      */
     @Nested
+    @ToBeReplacedByLazyProperty
     List<CommandLineArgumentProvider> getArgumentProviders();
 
     /**
@@ -140,6 +169,7 @@ public interface JavaExecSpec extends JavaForkOptions, BaseExecSpec {
      * Returns the classpath for executing the main class.
      */
     @Classpath
+    @ToBeReplacedByLazyProperty
     FileCollection getClasspath();
 
     /**

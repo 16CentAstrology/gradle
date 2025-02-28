@@ -17,16 +17,17 @@
 package org.gradle.api.internal.changedetection.state;
 
 import org.gradle.cache.FileLockManager;
-import org.gradle.cache.PersistentCache;
 import org.gradle.cache.IndexedCache;
 import org.gradle.cache.IndexedCacheParameters;
+import org.gradle.cache.PersistentCache;
 import org.gradle.cache.internal.InMemoryCacheDecoratorFactory;
 import org.gradle.cache.scopes.ScopedCacheBuilderFactory;
+import org.gradle.internal.service.scopes.Scope;
+import org.gradle.internal.service.scopes.ServiceScope;
 
 import java.io.Closeable;
 
-import static org.gradle.cache.internal.filelock.LockOptionsBuilder.mode;
-
+@ServiceScope({Scope.UserHome.class, Scope.BuildSession.class})
 public class CrossBuildFileHashCache implements Closeable {
 
     private final PersistentCache cache;
@@ -36,7 +37,7 @@ public class CrossBuildFileHashCache implements Closeable {
         this.inMemoryCacheDecoratorFactory = inMemoryCacheDecoratorFactory;
         cache = cacheBuilderFactory.createCacheBuilder(cacheKind.cacheId)
             .withDisplayName(cacheKind.description)
-            .withLockOptions(mode(FileLockManager.LockMode.OnDemand)) // Lock on demand
+            .withInitialLockMode(FileLockManager.LockMode.OnDemand)
             .open();
     }
 

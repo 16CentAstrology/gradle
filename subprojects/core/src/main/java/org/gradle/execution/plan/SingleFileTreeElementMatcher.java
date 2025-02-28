@@ -17,9 +17,12 @@
 package org.gradle.execution.plan;
 
 import org.gradle.api.file.FileTreeElement;
+import org.gradle.api.file.FilePermissions;
 import org.gradle.api.file.RelativePath;
+import org.gradle.api.internal.file.DefaultFilePermissions;
 import org.gradle.api.specs.Spec;
 import org.gradle.internal.UncheckedException;
+import org.gradle.internal.deprecation.DeprecationLogger;
 import org.gradle.internal.file.Stat;
 
 import java.io.File;
@@ -123,8 +126,20 @@ public class SingleFileTreeElementMatcher {
         }
 
         @Override
+        @Deprecated
         public int getMode() {
-            return stat.getUnixMode(file);
+            DeprecationLogger.deprecateMethod(FileTreeElement.class, "getMode()")
+                .replaceWith("getPermissions()")
+                .willBeRemovedInGradle9()
+                .withUpgradeGuideSection(8, "unix_file_permissions_deprecated")
+                .nagUser();
+            return getPermissions().toUnixNumeric();
+        }
+
+        @Override
+        public FilePermissions getPermissions() {
+            int unixNumeric = stat.getUnixMode(file);
+            return new DefaultFilePermissions(unixNumeric);
         }
     }
 }

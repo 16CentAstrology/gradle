@@ -16,13 +16,14 @@
 
 package gradlebuild.integrationtests
 
-import gradlebuild.basics.accessors.groovy
+import gradlebuild.basics.capitalize
 import gradlebuild.basics.repoRoot
 import gradlebuild.basics.testSplitExcludeTestClasses
 import gradlebuild.basics.testSplitIncludeTestClasses
 import gradlebuild.basics.testSplitOnlyTestGradleVersion
+import gradlebuild.basics.daemonDebuggingIsEnabled
+import gradlebuild.basics.launcherDebuggingIsEnabled
 import gradlebuild.basics.testing.TestType
-import gradlebuild.capitalize
 import gradlebuild.integrationtests.extension.IntegrationTestExtension
 import gradlebuild.integrationtests.tasks.DistributionTest
 import gradlebuild.integrationtests.tasks.IntegrationTest
@@ -34,8 +35,11 @@ import org.gradle.api.artifacts.Configuration
 import org.gradle.api.attributes.Category
 import org.gradle.api.attributes.LibraryElements
 import org.gradle.api.attributes.Usage
+import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.Directory
+import org.gradle.api.tasks.GroovySourceDirectorySet
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.SourceSet
@@ -79,28 +83,32 @@ fun Project.addDependenciesAndConfigurations(prefix: String) {
         resolver("${prefix}TestAllDistributionPath", "gradle-all-distribution-zip", allDistribution)
         resolver("${prefix}TestDocsDistributionPath", "gradle-docs-distribution-zip", docsDistribution)
         resolver("${prefix}TestSrcDistributionPath", "gradle-src-distribution-zip", srcDistribution)
+        resolver("${prefix}TestAgentsClasspath", LibraryElements.JAR)
     }
 
     // do not attempt to find projects when the plugin is applied just to generate accessors
-    if (project.name != "gradle-kotlin-dsl-accessors" && project.name != "test" /* remove once wrapper is updated */) {
+    if (project.name != "gradle-kotlin-dsl-accessors" && project.name != "enterprise-plugin-performance" && project.name != "test" /* remove once wrapper is updated */) {
         dependencies {
+            "${prefix}TestImplementation"(project)
             "${prefix}TestRuntimeOnly"(project.the<ExternalModulesExtension>().junit5Vintage)
             "${prefix}TestImplementation"(project(":internal-integ-testing"))
             "${prefix}TestFullDistributionRuntimeClasspath"(project(":distributions-full"))
+            // Add the agent JAR to the test runtime classpath so the InProcessGradleExecuter can find the module and spawn daemons.
+            // This doesn't apply the agent to the test process.
+            "${prefix}TestRuntimeOnly"(project(":instrumentation-agent"))
+            "${prefix}TestAgentsClasspath"(project(":instrumentation-agent"))
         }
     }
 }
 
 
+@Suppress("UnusedPrivateProperty")
 internal
 fun Project.addSourceSet(testType: TestType): SourceSet {
     val prefix = testType.prefix
     val sourceSets = the<SourceSetContainer>()
     val main by sourceSets.getting
-    return sourceSets.create("${prefix}Test") {
-        compileClasspath += main.output
-        runtimeClasspath += main.output
-    }
+    return sourceSets.create("${prefix}Test")
 }
 
 
@@ -128,10 +136,20 @@ fun Project.createTasks(sourceSet: SourceSet, testType: TestType) {
 
 
 fun Project.getBucketProvider() = gradle.sharedServices.registerIfAbsent("buildBucketProvider", BuildBucketProvider::class) {
-    parameters.includeTestClasses.set(project.testSplitIncludeTestClasses)
-    parameters.excludeTestClasses.set(project.testSplitExcludeTestClasses)
-    parameters.onlyTestGradleVersion.set(project.testSplitOnlyTestGradleVersion)
-    parameters.repoRoot.set(repoRoot())
+    parameters.includeTestClasses = project.testSplitIncludeTestClasses
+    parameters.excludeTestClasses = project.testSplitExcludeTestClasses
+    parameters.onlyTestGradleVersion = project.testSplitOnlyTestGradleVersion
+    parameters.repoRoot = repoRoot()
+}
+
+
+internal
+abstract class AgentsClasspathProvider : CommandLineArgumentProvider {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val agentsClasspath: ConfigurableFileCollection
+
+    override fun asArguments() = agentsClasspath.files.map { "-javaagent:$it" }
 }
 
 
@@ -156,23 +174,37 @@ fun Project.createTestTask(name: String, executer: String, sourceSet: SourceSet,
             val samplesDir = layout.projectDirectory.dir("src/main")
             jvmArgumentProviders.add(SamplesBaseDirPropertyProvider(samplesDir))
         }
+        setUpAgentIfNeeded(testType, executer)
     }
 
 
 private
+fun IntegrationTest.setUpAgentIfNeeded(testType: TestType, executer: String) {
+    if (executer == "embedded") {
+        // Apply the instrumentation agent to the test process when running integration tests with embedded Gradle executer.
+        jvmArgumentProviders.add(project.objects.newInstance<AgentsClasspathProvider>().apply {
+            agentsClasspath.from(project.configurations["${testType.prefix}TestAgentsClasspath"])
+        })
+    }
+
+    val integTestUseAgentSysPropName = "org.gradle.integtest.agent.allowed"
+    val integtestAgentAllowed = project.providers.gradleProperty(integTestUseAgentSysPropName);
+    if (integtestAgentAllowed.isPresent) {
+        val shouldUseAgent = integtestAgentAllowed.get().toBoolean()
+        systemProperties[integTestUseAgentSysPropName] = shouldUseAgent.toString()
+    }
+}
+
+
+private
 fun IntegrationTest.addDebugProperties() {
-    // TODO Move magic property out
-    if (project.hasProperty("org.gradle.integtest.debug")) {
+    if (project.daemonDebuggingIsEnabled) {
         systemProperties["org.gradle.integtest.debug"] = "true"
         testLogging.showStandardStreams = true
     }
-    // TODO Move magic property out
-    if (project.hasProperty("org.gradle.integtest.verbose")) {
-        testLogging.showStandardStreams = true
-    }
-    // TODO Move magic property out
-    if (project.hasProperty("org.gradle.integtest.launcher.debug")) {
+    if (project.launcherDebuggingIsEnabled) {
         systemProperties["org.gradle.integtest.launcher.debug"] = "true"
+        testLogging.showStandardStreams = true
     }
 }
 
@@ -180,8 +212,9 @@ fun IntegrationTest.addDebugProperties() {
 fun DistributionTest.setSystemPropertiesOfTestJVM(defaultVersions: String) {
     // use -PtestVersions=all or -PtestVersions=1.2,1.3…
     val integTestVersionsSysProp = "org.gradle.integtest.versions"
-    if (project.hasProperty("testVersions")) {
-        systemProperties[integTestVersionsSysProp] = project.property("testVersions")
+    val testVersions = project.providers.gradleProperty("testVersions")
+    if (testVersions.isPresent) {
+        systemProperties[integTestVersionsSysProp] = testVersions.get()
     } else {
         systemProperties[integTestVersionsSysProp] = defaultVersions
     }
@@ -197,7 +230,7 @@ fun Project.configureIde(testType: TestType) {
     plugins.withType<IdeaPlugin> {
         with(model) {
             module {
-                testSources.from(sourceSet.java.srcDirs, sourceSet.groovy.srcDirs)
+                testSources.from(sourceSet.java.srcDirs, sourceSet.the<GroovySourceDirectorySet>().srcDirs)
                 testResources.from(sourceSet.resources.srcDirs)
             }
         }

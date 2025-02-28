@@ -16,9 +16,11 @@
 
 package org.gradle.api.file;
 
+import org.gradle.api.Incubating;
 import org.gradle.api.Project;
 import org.gradle.api.provider.Provider;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.declarative.dsl.model.annotations.Restricted;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
 
 import java.io.File;
@@ -28,13 +30,15 @@ import java.io.File;
  *
  * <p>An instance of this type can be injected into a task, plugin or other object by annotating a public constructor or method with {@code javax.inject.Inject}. It is also available via {@link org.gradle.api.Project#getLayout()}.
  *
+ * <p><b>Note:</b> This interface is not intended for implementation by build script or plugin authors.
  * @since 4.1
  */
-@ServiceScope(Scopes.Project.class)
+@ServiceScope(Scope.Project.class)
 public interface ProjectLayout {
     /**
      * Returns the project directory.
      */
+    @Restricted
     Directory getProjectDirectory();
 
     /**
@@ -43,12 +47,30 @@ public interface ProjectLayout {
     DirectoryProperty getBuildDirectory();
 
     /**
+     * Returns the settings directory.
+     * <p>
+     * The settings directory is the directory containing the settings file.
+     * It is shared by all projects in the build.
+     *
+     * @since 8.13
+     */
+    @Incubating
+    @Restricted
+    Directory getSettingsDirectory();
+
+    /**
      * Creates a {@link RegularFile} provider whose location is calculated from the given {@link Provider}.
+     * <p>
+     * File system locations based on relative paths will be
+     * resolved against this layout's reference location, as defined by {@link #getProjectDirectory()}.
      */
     Provider<RegularFile> file(Provider<File> file);
 
     /**
      * Creates a {@link Directory} provider whose location is calculated from the given {@link Provider}.
+     * <p>
+     * File system locations based on relative paths will be
+     * resolved against this layout's reference location, as defined by {@link #getProjectDirectory()}.
      *
      * @since 6.0
      */

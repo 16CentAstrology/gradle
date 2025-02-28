@@ -30,14 +30,17 @@ import org.gradle.api.internal.TaskInternal
 import org.gradle.api.internal.file.TestFiles
 import org.gradle.api.internal.project.BuildOperationCrossProjectConfigurator
 import org.gradle.api.internal.project.ProjectInternal
+import org.gradle.api.internal.project.ProjectRegistry
 import org.gradle.api.internal.project.ProjectState
 import org.gradle.api.internal.project.taskfactory.ITaskFactory
 import org.gradle.api.internal.project.taskfactory.TaskFactory
 import org.gradle.api.internal.project.taskfactory.TaskIdentity
 import org.gradle.api.internal.project.taskfactory.TaskInstantiator
+import org.gradle.api.internal.project.taskfactory.TestTaskIdentities
 import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.TaskDependency
+import org.gradle.internal.instantiation.InstantiatorFactory
 import org.gradle.internal.reflect.DirectInstantiator
 import org.gradle.internal.service.ServiceRegistry
 import org.gradle.util.Path
@@ -47,7 +50,12 @@ import static java.util.Collections.singletonMap
 
 class DefaultTaskContainerTest extends AbstractPolymorphicDomainObjectContainerSpec<Task> {
 
+    private taskIdentityFactory = TestTaskIdentities.factory()
     private taskFactory = Mock(ITaskFactory)
+    private instantiatorFactory = Mock(InstantiatorFactory)
+    private serviceRegistry = Mock(ServiceRegistry) {
+        get(InstantiatorFactory) >> instantiatorFactory
+    }
     private project = Mock(ProjectInternal, name: "<project>") {
         identityPath(_) >> { String name ->
             Path.path(":project").child(name)
@@ -62,19 +70,21 @@ class DefaultTaskContainerTest extends AbstractPolymorphicDomainObjectContainerS
             getDepth() >> 0
             getProjectPath() >> Path.path(":project")
         }
-        getServices() >> Mock(ServiceRegistry)
+        getServices() >> serviceRegistry
         getTaskDependencyFactory() >> TestFiles.taskDependencyFactory()
         getObjects() >> Stub(ObjectFactory)
-    }
-    private taskCount = 1
+    } as ProjectInternal
+    private final projectRegistry = Mock(ProjectRegistry)
     private container = new DefaultTaskContainerFactory(
         DirectInstantiator.INSTANCE,
+        taskIdentityFactory,
         taskFactory,
-        project,
+        project as ProjectInternal,
         new TaskStatistics(),
-        buildOperationExecutor,
-        new BuildOperationCrossProjectConfigurator(buildOperationExecutor),
-        callbackActionDecorator
+        buildOperationRunner,
+        new BuildOperationCrossProjectConfigurator(buildOperationRunner),
+        callbackActionDecorator,
+        projectRegistry
     ).create()
 
     boolean supportsBuildOperations = true
@@ -1464,7 +1474,7 @@ class DefaultTaskContainerTest extends AbstractPolymorphicDomainObjectContainerS
         thrown(UnsupportedOperationException)
     }
 
-    def factory = new TaskInstantiator(new TaskFactory().createChild(project, TestUtil.instantiatorFactory().decorateScheme()), project)
+    def factory = new TaskInstantiator(taskIdentityFactory, new TaskFactory().createChild(project, TestUtil.instantiatorFactory().decorateScheme()), project)
     SomeTask a = factory.create("a", SomeTask)
     SomeTask b = factory.create("b", SomeTask)
     SomeTask c = factory.create("c", SomeTask)
@@ -1606,7 +1616,7 @@ class DefaultTaskContainerTest extends AbstractPolymorphicDomainObjectContainerS
         def otherTaskContainer = Mock(TaskContainerInternal)
         def otherProjectState = Mock(ProjectState)
 
-        project.findProject(projectPath) >> otherProject
+        projectRegistry.getProject(_) >> otherProject
 
         otherProject.owner >> otherProjectState
         1 * otherProjectState.ensureTasksDiscovered()
@@ -1622,11 +1632,12 @@ class DefaultTaskContainerTest extends AbstractPolymorphicDomainObjectContainerS
     }
 
     private <U extends TaskInternal> U task(final String name, Class<U> type) {
-        Mock(type, name: "[task" + taskCount++ + "]") {
+        def taskId = taskIdentityFactory.create(name, type, project)
+        Mock(type, name: "[task" + taskId.id + "]") {
             getName() >> name
             getTaskDependency() >> Mock(TaskDependency)
-            getTaskIdentity() >> TaskIdentity.create(name, type, project)
-        }
+            getTaskIdentity() >> taskId
+        } as U
     }
 
     private Task addTask(String name) {
@@ -1648,6 +1659,4 @@ class DefaultTaskContainerTest extends AbstractPolymorphicDomainObjectContainerS
     interface CustomTask extends TaskInternal {}
 
     interface MyCustomTask extends CustomTask {}
-
-    interface AnotherCustomTask extends TaskInternal {}
 }

@@ -18,17 +18,21 @@ package org.gradle.execution.taskgraph
 
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
 import org.gradle.integtests.fixtures.RepoScriptBlockUtil
+import org.gradle.integtests.fixtures.ToBeFixedForConfigurationCache
+import org.gradle.integtests.fixtures.ToBeFixedForIsolatedProjects
 import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
 import org.gradle.internal.reflect.validation.ValidationMessageChecker
-import org.gradle.test.fixtures.Flaky
 import org.gradle.test.fixtures.server.http.BlockingHttpServer
+import org.gradle.test.precondition.Requires
+import org.gradle.test.preconditions.IntegTestPreconditions
 import org.junit.Rule
-import spock.lang.IgnoreIf
 import spock.lang.Issue
-import spock.lang.Requires
 import spock.lang.Timeout
 
-@IgnoreIf({ GradleContextualExecuter.parallel })
+import static org.gradle.integtests.fixtures.ToBeFixedForConfigurationCache.Skip.INVESTIGATE
+
+@Requires(IntegTestPreconditions.NotParallelExecutor)
+@ToBeFixedForIsolatedProjects(because = "allprojects")
 // no point, always runs in parallel
 class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec implements ValidationMessageChecker {
 
@@ -38,6 +42,7 @@ class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec imple
     def setup() {
         blockingServer.start()
 
+        createDirs("a", "b")
         settingsFile << 'include "a", "b"'
 
         buildFile << """
@@ -263,6 +268,7 @@ class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec imple
         }
     }
 
+    @ToBeFixedForConfigurationCache(skip = INVESTIGATE)
     def "tasks from same project do not run in parallel even when tasks do undeclared dependency resolution"() {
         given:
         executer.beforeExecute {
@@ -382,7 +388,6 @@ class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec imple
         }
     }
 
-    @Flaky(because = "https://github.com/gradle/gradle-private/issues/3570")
     def "tasks are not run in parallel if destroy files overlap with input files (create/use first)"() {
         given:
         withParallelThreads(2)
@@ -524,7 +529,7 @@ class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec imple
         }
     }
 
-    @Requires({ GradleContextualExecuter.embedded })
+    @Requires(IntegTestPreconditions.IsEmbeddedExecutor)
     // this test only works in embedded mode because of the use of validation test fixtures
     def "other tasks are not started when an invalid task is running"() {
         given:
@@ -550,7 +555,7 @@ class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec imple
         run ":aPingWithCacheableWarnings", ":bPing", ":cPing"
     }
 
-    @Requires({ GradleContextualExecuter.embedded })
+    @Requires(IntegTestPreconditions.IsEmbeddedExecutor)
     // this test only works in embedded mode because of the use of validation test fixtures
     def "invalid task is not executed in parallel with other task"() {
         given:
@@ -646,11 +651,11 @@ class ParallelTaskExecutionIntegrationTest extends AbstractIntegrationSpec imple
             }
             subprojects {
                 configurations.create("myconfig1") {
-                    canBeResolved = true
+                    assert canBeResolved
                     canBeConsumed = false
                 }
                 configurations.create("myconfig2") {
-                    canBeResolved = true
+                    assert canBeResolved
                     canBeConsumed = false
                 }
 

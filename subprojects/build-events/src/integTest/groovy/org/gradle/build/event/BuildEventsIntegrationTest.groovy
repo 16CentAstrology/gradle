@@ -19,8 +19,9 @@ package org.gradle.build.event
 import org.gradle.api.services.BuildServiceParameters
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
 import org.gradle.integtests.fixtures.DefaultTestExecutionResult
-import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
 import org.gradle.test.fixtures.file.TestFile
+import org.gradle.test.precondition.Requires
+import org.gradle.test.preconditions.IntegTestPreconditions
 import org.gradle.tooling.events.FinishEvent
 import org.gradle.tooling.events.OperationCompletionListener
 import org.gradle.tooling.events.task.TaskFailureResult
@@ -28,8 +29,9 @@ import org.gradle.tooling.events.task.TaskFinishEvent
 import org.gradle.tooling.events.task.TaskSkippedResult
 import org.gradle.tooling.events.task.TaskSuccessResult
 import org.gradle.util.internal.TextUtil
-import spock.lang.IgnoreIf
 import spock.lang.Issue
+
+import static org.hamcrest.Matchers.containsString
 
 class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
     def "listener can subscribe to task completion events"() {
@@ -88,6 +90,7 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
     }
 
     def "plugin applied to multiple projects can register a shared listener"() {
+        createDirs("a", "b")
         settingsFile << """
             include 'a', 'b'
         """
@@ -170,7 +173,7 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
         outputContains("EVENT: finish :b:thing")
     }
 
-    @IgnoreIf({ GradleContextualExecuter.configCache }) // already covers CC
+    @Requires(value = IntegTestPreconditions.NotConfigCached, reason = "already covers CC")
     def "listener is not discarded after configuration phase when used with configuration cache"() {
         listenerReceivedConfigurationTimeData()
         registeringPlugin()
@@ -186,7 +189,6 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
         """
         executer.beforeExecute {
             withArgument("--configuration-cache")
-            withArgument("-Dorg.gradle.configuration-cache.internal.load-after-store=true")
         }
 
         when:
@@ -207,7 +209,7 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
     }
 
     def "listener registered from init script can receive task completion events from buildSrc and main build"() {
-        def initScript = file("init.gradle")
+        def initScript = initScriptFile
         loggingListener(initScript)
         initScript << """
             if (gradle.parent == null) {
@@ -325,8 +327,7 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
         outputContains("EVENT: finish :b")
     }
 
-    @IgnoreIf({ GradleContextualExecuter.embedded })
-    // Tries to resolve external (api) jars that are not available in the embedded environment
+    @Requires(value = IntegTestPreconditions.NotEmbeddedExecutor, reason = "Tries to resolve external (api) jars that are not available in the embedded environment")
     @Issue("https://github.com/gradle/gradle/issues/16774")
     def "can use plugin that registers build event listener with ProjectBuilder"() {
         given:
@@ -334,10 +335,6 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
             plugins { id 'groovy-gradle-plugin' }
             repositories { mavenCentral() }
             dependencies { testImplementation("junit:junit:4.13") }
-            test.testLogging {
-                showStandardStreams = true
-                showExceptions = true
-            }
         """
         def plugin = file('src/main/groovy/my-plugin.gradle')
         loggingListener(plugin)
@@ -369,8 +366,7 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
         result.testClass('my.MyTest').assertTestCount(1, 0, 0)
     }
 
-    @IgnoreIf({ GradleContextualExecuter.embedded })
-    // Cannot run TestKit in embedded mode
+    @Requires(value = IntegTestPreconditions.NotEmbeddedExecutor, reason = "Cannot run TestKit in embedded mode")
     def "can use plugin that registers build event listener with TestKit"() {
         given:
         def plugin = file('src/main/groovy/my-plugin.gradle')
@@ -385,10 +381,6 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
             plugins { id 'groovy-gradle-plugin' }
             repositories { mavenCentral() }
             dependencies { testImplementation("junit:junit:4.13") }
-            test.testLogging {
-                showStandardStreams = true
-                showExceptions = true
-            }
         """
 
         def testProjectDir = file("testTmp").tap { it.mkdirs() }
@@ -423,12 +415,12 @@ class BuildEventsIntegrationTest extends AbstractIntegrationSpec {
 
         then:
         executedAndNotSkipped(':test')
-        outputContains("listener registered")
 
         // ensure the test has been executed
         def result = new DefaultTestExecutionResult(testDirectory)
         result.assertTestClassesExecuted('my.MyTest')
         result.testClass('my.MyTest').assertTestCount(1, 0, 0)
+        result.testClass('my.MyTest').assertStdout(containsString("listener registered"))
     }
 
     void loggingListener(TestFile file = buildFile) {

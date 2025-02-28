@@ -25,14 +25,18 @@ import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.invocation.Gradle;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.logging.configuration.LoggingConfiguration;
+import org.gradle.api.problems.internal.ProblemLocator;
 import org.gradle.execution.WorkValidationWarningReporter;
 import org.gradle.execution.taskgraph.TaskExecutionGraphInternal;
 import org.gradle.initialization.BuildRequestMetaData;
 import org.gradle.internal.InternalBuildListener;
+import org.gradle.internal.deprecation.DeprecationLogger;
 import org.gradle.internal.enterprise.core.GradleEnterprisePluginManager;
 import org.gradle.internal.logging.format.TersePrettyDurationFormatter;
 import org.gradle.internal.logging.text.StyledTextOutputFactory;
 import org.gradle.internal.time.Clock;
+
+import java.util.Collections;
 
 /**
  * A {@link org.gradle.BuildListener} which logs the build progress.
@@ -66,8 +70,10 @@ public class BuildLogger implements InternalBuildListener, TaskExecutionGraphLis
         if (logger.isDebugEnabled()) {
             logger.debug("Gradle user home: {}", startParameter.getGradleUserHomeDir());
             logger.debug("Current dir: {}", startParameter.getCurrentDir());
-            logger.debug("Settings file: {}", startParameter.getSettingsFile());
-            logger.debug("Build file: {}", startParameter.getBuildFile());
+            DeprecationLogger.whileDisabled(() -> {
+                logger.debug("Settings file: {}", startParameter.getSettingsFile());
+                logger.debug("Build file: {}", startParameter.getBuildFile());
+            });
         }
     }
 
@@ -110,12 +116,16 @@ public class BuildLogger implements InternalBuildListener, TaskExecutionGraphLis
     }
 
     public void logResult(Throwable buildFailure) {
+        logResult(buildFailure, t -> Collections.emptyList());
+    }
+
+    public void logResult(Throwable buildFailure, ProblemLocator problemLocator) {
         if (action == null) {
             // This logger has been replaced (for example using `Gradle.useLogger()`), so don't log anything
             return;
         }
         BuildResult buildResult = new BuildResult(action, null, buildFailure);
-        exceptionReporter.buildFinished(buildResult);
+        exceptionReporter.buildFinished(buildResult, problemLocator);
         resultLogger.buildFinished(buildResult);
     }
 }

@@ -22,13 +22,13 @@ import org.gradle.api.internal.plugins.DslObject
 import org.gradle.api.internal.provider.CollectionProviderInternal
 import org.gradle.api.internal.provider.ProviderInternal
 import org.gradle.api.internal.provider.ValueSupplier
-import org.gradle.configuration.internal.DefaultUserCodeApplicationContext
-import org.gradle.configuration.internal.UserCodeApplicationContext
-import org.gradle.configuration.internal.UserCodeApplicationId
 import org.gradle.internal.Actions
-import org.gradle.internal.DisplayName
+import org.gradle.internal.code.DefaultUserCodeApplicationContext
+import org.gradle.internal.code.UserCodeApplicationContext
+import org.gradle.internal.code.UserCodeApplicationId
+import org.gradle.internal.code.UserCodeSource
 import org.gradle.internal.metaobject.ConfigureDelegate
-import org.gradle.internal.operations.TestBuildOperationExecutor
+import org.gradle.internal.operations.TestBuildOperationRunner
 import org.gradle.util.TestUtil
 import org.gradle.util.internal.ConfigureUtil
 import org.hamcrest.CoreMatchers
@@ -42,9 +42,9 @@ import static org.junit.Assume.assumeTrue
 
 abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
 
-    TestBuildOperationExecutor buildOperationExecutor = new TestBuildOperationExecutor()
+    TestBuildOperationRunner buildOperationRunner = new TestBuildOperationRunner()
     UserCodeApplicationContext userCodeApplicationContext = new DefaultUserCodeApplicationContext()
-    CollectionCallbackActionDecorator callbackActionDecorator = new DefaultCollectionCallbackActionDecorator(buildOperationExecutor, userCodeApplicationContext)
+    CollectionCallbackActionDecorator callbackActionDecorator = new DefaultCollectionCallbackActionDecorator(buildOperationRunner, userCodeApplicationContext)
 
     abstract boolean isSupportsBuildOperations()
 
@@ -260,7 +260,8 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
 
         then:
         _ * provider.getElementType() >> getType()
-        _ * provider.get() >> [a, d]
+        _ * provider.size() >> 2
+        _ * provider.calculateValue(_) >> ValueSupplier.Value.of([a, d])
         0 * _
         seen == [b, a, d]
     }
@@ -451,7 +452,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         then:
         1 * action.execute(a)
         _ * provider2.type >> type
-        1 * provider2.get() >> a
+        1 * provider2.calculateValue(_) >> ValueSupplier.Value.of(a)
         0 * _
     }
 
@@ -480,7 +481,8 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         1 * action.execute(a)
         1 * action.execute(b)
         _ * provider2.elementType >> type
-        1 * provider2.get() >> [a, b]
+        1 * provider2.calculateValue(_) >> ValueSupplier.Value.of([a, b])
+        _ * provider2.size() >> 2
         0 * _
     }
 
@@ -704,7 +706,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
 
         then:
         _ * provider2.type >> type
-        1 * provider2.get() >> a
+        1 * provider2.calculateValue(_) >> ValueSupplier.Value.of(a)
         1 * action.execute(a)
         0 * _
     }
@@ -733,7 +735,8 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
 
         then:
         _ * provider2.elementType >> type
-        1 * provider2.get() >> [a, b]
+        _ * provider2.size() >> 2
+        1 * provider2.calculateValue(_) >> ValueSupplier.Value.of([a, b])
         1 * action.execute(a)
         1 * action.execute(b)
         0 * _
@@ -1664,7 +1667,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         if (isDirectElementAdditionAllowed()) {
             methods += [
                 "add(T)": { container.add(b) },
-                "addAll(Collection<T>)": { container.addAll([b]) }
+                "addAll(Collection)": { container.addAll([b]) }
             ]
         }
 
@@ -1767,7 +1770,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         containerSupportsBuildOperations()
 
         UserCodeApplicationId id1 = null
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             id1 = it
             container.whenObjectAdded {
                 assert userCodeApplicationContext.current().id == id1
@@ -1778,13 +1781,13 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         addToContainer(a)
 
         then:
-        def callbacks1 = buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
+        def callbacks1 = buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
         callbacks1.size() == 1
         callbacks1.first().details.applicationId == id1.longValue()
 
         when:
         UserCodeApplicationId id2 = null
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             id2 = it
             container.whenObjectAdded {
                 assert userCodeApplicationContext.current().id == id2
@@ -1795,7 +1798,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         addToContainer(b)
 
         then:
-        def callbacks = buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
+        def callbacks = buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
         callbacks.size() == 3
         callbacks[1].details.applicationId == id1.longValue()
         callbacks[2].details.applicationId == id2.longValue()
@@ -1805,7 +1808,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         given:
         containerSupportsBuildOperations()
 
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             container.withType(otherType).whenObjectAdded {
                 throw new IllegalStateException()
             }
@@ -1815,14 +1818,14 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         addToContainer(a)
 
         then:
-        buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
+        buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
     }
 
     def "does not fire build operation if callback is filtered out by condition"() {
         given:
         containerSupportsBuildOperations()
 
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             container.matching { !it.is(a) }.whenObjectAdded {
                 throw new IllegalStateException()
             }
@@ -1832,7 +1835,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         addToContainer(a)
 
         then:
-        buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
+        buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
     }
 
     def "fires build operation for existing elements"() {
@@ -1845,7 +1848,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         when:
         UserCodeApplicationId id = null
         List<UserCodeApplicationId> ids = []
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             id = it
             container.matching { !it.is(a) }.all {
                 ids << userCodeApplicationContext.current().id
@@ -1855,7 +1858,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         then:
         ids.size() == 1
         ids.first() == id
-        def ops = buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
+        def ops = buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
         ops.size() == 1
         ops.first().details.applicationId == id.longValue()
     }
@@ -1874,7 +1877,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         then:
         ids.size() == 1
         ids.first() == null
-        buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
+        buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType).empty
     }
 
     def "handles nested listener registration"() {
@@ -1885,12 +1888,12 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         UserCodeApplicationId id1 = null
         UserCodeApplicationId id2 = null
         List<UserCodeApplicationId> ids = []
-        userCodeApplicationContext.apply(Stub(DisplayName)) {
+        userCodeApplicationContext.apply(Stub(UserCodeSource)) {
             id1 = it
             container.all {
                 ids << userCodeApplicationContext.current()
                 if (it.is(a)) {
-                    userCodeApplicationContext.apply(Stub(DisplayName)) {
+                    userCodeApplicationContext.apply(Stub(UserCodeSource)) {
                         id2 = it
                         container.all {
                             ids << userCodeApplicationContext.current()
@@ -1903,7 +1906,7 @@ abstract class AbstractDomainObjectCollectionSpec<T> extends Specification {
         addToContainer(b)
 
         then:
-        def ops = buildOperationExecutor.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
+        def ops = buildOperationRunner.log.all(ExecuteDomainObjectCollectionCallbackBuildOperationType)
         ops.size() == 4
         ops[0].details.applicationId == id1.longValue()
         ops[1].details.applicationId == id2.longValue()

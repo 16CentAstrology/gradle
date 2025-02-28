@@ -21,10 +21,18 @@ import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.internal.project.ProjectState;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.logging.Logging;
+import org.gradle.api.problems.ProblemSpec;
+import org.gradle.api.problems.Severity;
+import org.gradle.api.problems.internal.GeneralDataSpec;
+import org.gradle.api.problems.internal.InternalProblemSpec;
+import org.gradle.api.problems.internal.InternalProblems;
 import org.gradle.api.specs.Spec;
 import org.gradle.util.internal.NameMatcher;
 
+import javax.annotation.Nonnull;
+import javax.inject.Inject;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 public class DefaultTaskSelector implements TaskSelector {
@@ -33,9 +41,15 @@ public class DefaultTaskSelector implements TaskSelector {
     private final TaskNameResolver taskNameResolver;
     private final ProjectConfigurer configurer;
 
+    @Inject
     public DefaultTaskSelector(TaskNameResolver taskNameResolver, ProjectConfigurer configurer) {
         this.taskNameResolver = taskNameResolver;
         this.configurer = configurer;
+    }
+
+    @Inject
+    protected InternalProblems getProblemsService() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -49,7 +63,7 @@ public class DefaultTaskSelector implements TaskSelector {
             }
         }
 
-        final Set<Task> selectedTasks = getSelection(context, project, taskName, includeSubprojects).getTasks();
+        Set<Task> selectedTasks = getSelection(context, project, taskName, includeSubprojects).getTasks();
         return element -> !selectedTasks.contains(element);
     }
 
@@ -65,29 +79,50 @@ public class DefaultTaskSelector implements TaskSelector {
         if (tasks != null) {
             LOGGER.info("Task name matched '{}'", taskName);
             return new TaskSelection(targetProject.getProjectPath().getPath(), taskName, tasks);
-        } else {
-            Map<String, TaskSelectionResult> tasksByName = taskNameResolver.selectAll(targetProject.getMutableModel(), includeSubprojects);
-            NameMatcher matcher = new NameMatcher();
-            String actualName = matcher.find(taskName, tasksByName.keySet());
-
-            if (actualName != null) {
-                LOGGER.info("Abbreviated task name '{}' matched '{}'", taskName, actualName);
-                return new TaskSelection(targetProject.getProjectPath().getPath(), taskName, tasksByName.get(actualName));
-            }
-
-            String searchContext;
-            if (includeSubprojects && !targetProject.getChildProjects().isEmpty()) {
-                searchContext = targetProject.getDisplayName() + " and its subprojects";
-            } else {
-                searchContext = targetProject.getDisplayName().getDisplayName();
-            }
-
-            if (context.getOriginalPath().getPath().equals(taskName)) {
-                throw new TaskSelectionException(matcher.formatErrorMessage("Task", searchContext));
-            } else {
-                throw new TaskSelectionException(String.format("Cannot locate %s that match '%s' as %s", context.getType(), context.getOriginalPath(), matcher.formatErrorMessage("task", searchContext)));
-            }
         }
+
+        Map<String, TaskSelectionResult> tasksByName = taskNameResolver.selectAll(targetProject.getMutableModel(), includeSubprojects);
+        NameMatcher matcher = new NameMatcher();
+        String actualName = matcher.find(taskName, tasksByName.keySet());
+
+        if (actualName == null) {
+            throw throwTaskSelectionException(context, targetProject, taskName, includeSubprojects, matcher);
+        }
+        LOGGER.info("Abbreviated task name '{}' matched '{}'", taskName, actualName);
+        return new TaskSelection(targetProject.getProjectPath().getPath(), taskName, tasksByName.get(actualName));
+    }
+
+    private RuntimeException throwTaskSelectionException(SelectionContext context, ProjectState targetProject, String taskName, boolean includeSubprojects, NameMatcher matcher) {
+        String searchContext = getSearchContext(targetProject, includeSubprojects);
+
+        if (context.getOriginalPath().getPath().equals(taskName)) {
+            String message = matcher.formatErrorMessage("Task", searchContext);
+            throw getProblemsService().getInternalReporter().throwing(new TaskSelectionException(message), matcher.problemId(), spec -> {
+                configureProblem(spec, matcher, context);
+                spec.contextualLabel(message);
+            });
+        }
+        String message = String.format("Cannot locate %s that match '%s' as %s", context.getType(), context.getOriginalPath(),
+            matcher.formatErrorMessage("task", searchContext));
+
+        throw getProblemsService().getInternalReporter().throwing(new TaskSelectionException(message) /* this instead of cause */, matcher.problemId(), spec ->
+            configureProblem(spec, matcher, context)
+              .contextualLabel(message)
+        );
+    }
+
+    private static ProblemSpec configureProblem(ProblemSpec spec, NameMatcher matcher, SelectionContext context) {
+        ((InternalProblemSpec) spec).additionalDataInternal(GeneralDataSpec.class, data -> data.put("requestedPath", Objects.requireNonNull(context.getOriginalPath().getPath())));
+        spec.severity(Severity.ERROR);
+        return spec;
+    }
+
+    @Nonnull
+    private static String getSearchContext(ProjectState targetProject, boolean includeSubprojects) {
+        if (includeSubprojects && !targetProject.getChildProjects().isEmpty()) {
+            return targetProject.getDisplayName() + " and its subprojects";
+        }
+        return targetProject.getDisplayName().getDisplayName();
     }
 
     private static class TaskPathSpec implements Spec<Task> {

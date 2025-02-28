@@ -48,13 +48,14 @@ import org.gradle.api.internal.tasks.TaskMutator;
 import org.gradle.api.internal.tasks.TaskRequiredServices;
 import org.gradle.api.internal.tasks.TaskStateInternal;
 import org.gradle.api.internal.tasks.execution.DescribingAndSpec;
+import org.gradle.api.internal.tasks.properties.ServiceReferenceSpec;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.logging.Logging;
-import org.gradle.api.plugins.Convention;
 import org.gradle.api.plugins.ExtensionContainer;
 import org.gradle.api.provider.Property;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.services.BuildService;
+import org.gradle.api.services.internal.BuildServiceProvider;
 import org.gradle.api.services.internal.BuildServiceRegistryInternal;
 import org.gradle.api.specs.Spec;
 import org.gradle.api.tasks.Internal;
@@ -62,14 +63,15 @@ import org.gradle.api.tasks.TaskDependency;
 import org.gradle.api.tasks.TaskDestroyables;
 import org.gradle.api.tasks.TaskInstantiationException;
 import org.gradle.api.tasks.TaskLocalState;
-import org.gradle.configuration.internal.UserCodeApplicationContext;
 import org.gradle.internal.Cast;
 import org.gradle.internal.Factory;
+import org.gradle.internal.code.UserCodeApplicationContext;
+import org.gradle.internal.deprecation.DeprecationLogger;
 import org.gradle.internal.execution.history.changes.InputChangesInternal;
 import org.gradle.internal.extensibility.ExtensibleDynamicObject;
 import org.gradle.internal.hash.ClassLoaderHierarchyHasher;
 import org.gradle.internal.hash.HashCode;
-import org.gradle.internal.instantiation.InstanceGenerator;
+import org.gradle.internal.instantiation.InstantiatorFactory;
 import org.gradle.internal.logging.LoggingManagerInternal;
 import org.gradle.internal.logging.StandardOutputCapture;
 import org.gradle.internal.logging.slf4j.ContextAwareTaskLogger;
@@ -95,11 +97,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
-import static org.gradle.util.internal.GUtil.uncheckedCall;
+import static org.gradle.internal.UncheckedException.uncheckedCall;
 
 /**
- * @deprecated This class will be removed in Gradle 8.0. Please use {@link org.gradle.api.DefaultTask} instead.
+ * @deprecated This class will be removed in Gradle 9.0. Please use {@link org.gradle.api.DefaultTask} instead.
  */
 @Deprecated
 @DisableCachingByDefault(because = "Abstract super-class, not to be instantiated directly")
@@ -204,7 +207,7 @@ public abstract class AbstractTask implements TaskInternal, DynamicObjectAware {
 
     private void assertDynamicObject() {
         if (extensibleDynamicObject == null) {
-            extensibleDynamicObject = new ExtensibleDynamicObject(this, identity.type, services.get(InstanceGenerator.class));
+            extensibleDynamicObject = new ExtensibleDynamicObject(this, identity.type, services.get(InstantiatorFactory.class).decorateLenient(services));
         }
     }
 
@@ -388,7 +391,7 @@ public abstract class AbstractTask implements TaskInternal, DynamicObjectAware {
     }
 
     @Override
-    public DescribingAndSpec<? super TaskInternal> getOnlyIf() {
+    public Spec<? super TaskInternal> getOnlyIf() {
         return onlyIfSpec;
     }
 
@@ -583,15 +586,23 @@ public abstract class AbstractTask implements TaskInternal, DynamicObjectAware {
     @Internal
     @Override
     @Deprecated
-    public Convention getConvention() {
-        assertDynamicObject();
-        return extensibleDynamicObject.getConvention();
+    public org.gradle.api.plugins.Convention getConvention() {
+        return getConventionVia("Task.convention", false);
     }
 
     @Internal
     @Override
     public ExtensionContainer getExtensions() {
-        return getConvention();
+        return getConventionVia("Task.extensions", true);
+    }
+
+    private org.gradle.api.plugins.Convention getConventionVia(String invocationDescription, boolean disableDeprecationForConventionAccess) {
+        notifyConventionAccess(invocationDescription);
+        assertDynamicObject();
+        if (disableDeprecationForConventionAccess) {
+            return DeprecationLogger.whileDisabled(() -> extensibleDynamicObject.getConvention());
+        }
+        return extensibleDynamicObject.getConvention();
     }
 
     @Internal
@@ -1034,13 +1045,29 @@ public abstract class AbstractTask implements TaskInternal, DynamicObjectAware {
         taskRequiredServices.registerServiceUsage(service);
     }
 
+    @Override
     public TaskRequiredServices getRequiredServices() {
         return taskRequiredServices;
     }
 
     @Override
+    public void acceptServiceReferences(Set<ServiceReferenceSpec> serviceReferences) {
+        if (!taskRequiredServices.hasServiceReferences()) {
+            BuildServiceRegistryInternal buildServiceRegistry = getBuildServiceRegistry();
+            List<? extends BuildServiceProvider<?, ?>> asConsumedServices = serviceReferences.stream()
+                .map(it -> buildServiceRegistry.consume(it.getBuildServiceName(), it.getBuildServiceType()))
+                .collect(Collectors.toList());
+            taskRequiredServices.acceptServiceReferences(asConsumedServices);
+        }
+    }
+
+    @Override
     public List<ResourceLock> getSharedResources() {
         return getBuildServiceRegistry().getSharedResources(taskRequiredServices.getElements());
+    }
+
+    private void notifyConventionAccess(String invocationDescription) {
+        taskExecutionAccessChecker.notifyConventionAccess(this, invocationDescription);
     }
 
     private BuildServiceRegistryInternal getBuildServiceRegistry() {

@@ -22,11 +22,12 @@ import org.gradle.api.internal.file.FileCollectionInternal;
 import org.gradle.api.internal.file.FileCollectionStructureVisitor;
 import org.gradle.api.internal.file.FileTreeInternal;
 import org.gradle.api.internal.file.collections.FileSystemMirroringFileTree;
+import org.gradle.api.problems.Severity;
+import org.gradle.api.problems.internal.GradleCoreProblemGroup;
 import org.gradle.api.specs.Spec;
 import org.gradle.api.tasks.util.PatternSet;
-import org.gradle.internal.reflect.problems.ValidationProblemId;
-import org.gradle.internal.reflect.validation.Severity;
 import org.gradle.internal.reflect.validation.TypeValidationContext;
+import org.gradle.util.internal.TextUtil;
 
 import java.io.File;
 import java.util.ArrayDeque;
@@ -34,9 +35,12 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
+
+import static org.gradle.internal.deprecation.Documentation.userManual;
 
 public class MissingTaskDependencyDetector {
     private final ExecutionNodeAccessHierarchy outputHierarchy;
@@ -48,7 +52,7 @@ public class MissingTaskDependencyDetector {
     }
 
     public void detectMissingDependencies(LocalTaskNode node, TypeValidationContext validationContext) {
-        for (String outputPath : node.getMutationInfo().outputPaths) {
+        for (String outputPath : node.getMutationInfo().getOutputPaths()) {
             inputHierarchy.getNodesAccessing(outputPath).stream()
                 .filter(consumerNode -> hasNoSpecifiedOrder(node, consumerNode))
                 .filter(MissingTaskDependencyDetector::isEnabled)
@@ -164,21 +168,22 @@ public class MissingTaskDependencyDetector {
         });
     }
 
+    private static final String IMPLICIT_DEPENDENCY = "IMPLICIT_DEPENDENCY";
+
     private void collectValidationProblem(Node producer, Node consumer, TypeValidationContext validationContext, String consumerProducerPath) {
         validationContext.visitPropertyProblem(problem ->
-            problem.withId(ValidationProblemId.IMPLICIT_DEPENDENCY)
-                .reportAs(Severity.ERROR)
-                .withDescription(() -> "Gradle detected a problem with the following location: '" + consumerProducerPath + "'")
-                .happensBecause(() -> String.format("Task '%s' uses this output of task '%s' without declaring an explicit or implicit dependency. "
+            problem.id(TextUtil.screamingSnakeToKebabCase(IMPLICIT_DEPENDENCY), "Property has implicit dependency", GradleCoreProblemGroup.validation().property()) // TODO (donat) missing test coverage
+                .contextualLabel("Gradle detected a problem with the following location: '" + consumerProducerPath + "'")
+                .documentedAt(userManual("validation_problems", IMPLICIT_DEPENDENCY.toLowerCase(Locale.ROOT)))
+                .severity(Severity.ERROR)
+                .details(String.format("Task '%s' uses this output of task '%s' without declaring an explicit or implicit dependency. "
                         + "This can lead to incorrect results being produced, depending on what order the tasks are executed",
                     consumer,
                     producer
                 ))
-                .addPossibleSolution(() -> "Declare task '" + producer + "' as an input of '" + consumer + "'")
-                .addPossibleSolution(() -> "Declare an explicit dependency on '" + producer + "' from '" + consumer + "' using Task#dependsOn")
-                .addPossibleSolution(() -> "Declare an explicit dependency on '" + producer + "' from '" + consumer + "' using Task#mustRunAfter")
-                .documentedAt("validation_problems", "implicit_dependency")
-                .typeIsIrrelevantInErrorMessage()
+                .solution("Declare task '" + producer + "' as an input of '" + consumer + "'")
+                .solution("Declare an explicit dependency on '" + producer + "' from '" + consumer + "' using Task#dependsOn")
+                .solution("Declare an explicit dependency on '" + producer + "' from '" + consumer + "' using Task#mustRunAfter")
         );
     }
 

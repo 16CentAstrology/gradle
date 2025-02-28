@@ -17,8 +17,10 @@
 package org.gradle.api.file;
 
 import org.gradle.api.Action;
+import org.gradle.api.Incubating;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.WorkResult;
-import org.gradle.internal.service.scopes.Scopes;
+import org.gradle.internal.service.scopes.Scope;
 import org.gradle.internal.service.scopes.ServiceScope;
 
 
@@ -29,8 +31,28 @@ import org.gradle.internal.service.scopes.ServiceScope;
  *
  * @since 6.0
  */
-@ServiceScope(Scopes.Build.class)
+@ServiceScope({Scope.Build.class, Scope.Project.class})
 public interface FileSystemOperations {
+
+    /**
+     * Creates a {@link CopySpec} which can later be used to copy files or create an archive. The given action is used
+     * to configure the {@link CopySpec} before it is returned by this method.
+     *
+     * @param action Action to configure the CopySpec
+     * @return The CopySpec
+     * @since 8.5
+     */
+    @Incubating
+    CopySpec copySpec(Action<? super CopySpec> action);
+
+    /**
+     * Creates a {@link CopySpec} which can later be used to copy files or create an archive.
+     *
+     * @return a newly created copy spec
+     * @since 8.5
+     */
+    @Incubating
+    CopySpec copySpec();
 
     /**
      * Copies the specified files.
@@ -43,12 +65,12 @@ public interface FileSystemOperations {
 
     /**
      * Synchronizes the contents of a destination directory with some source directories and files.
-     * The given action is used to configure a {@link CopySpec}, which is then used to synchronize the files.
+     * The given action is used to configure a {@link SyncSpec}, which is then used to synchronize the files.
      *
-     * @param action action Action to configure the CopySpec.
+     * @param action action Action to configure the SyncSpec.
      * @return {@link WorkResult} that can be used to check if the sync did any work.
      */
-    WorkResult sync(Action<? super CopySpec> action);
+    WorkResult sync(Action<? super SyncSpec> action);
 
     /**
      * Deletes the specified files.
@@ -58,4 +80,57 @@ public interface FileSystemOperations {
      * @return {@link WorkResult} that can be used to check if delete did any work.
      */
     WorkResult delete(Action<? super DeleteSpec> action);
+
+    /**
+     * Creates and configures file access permissions. Differs from directory permissions due to
+     * the default value the permissions start out with before the configuration is applied.
+     * For details see {@link ConfigurableFilePermissions}.
+     *
+     * @param configureAction The configuration that gets applied to the newly created {@code FilePermissions}.
+     *
+     * @since 8.3
+     */
+    ConfigurableFilePermissions filePermissions(Action<? super ConfigurableFilePermissions> configureAction);
+
+    /**
+     * Creates and configures directory access permissions. Differs from file permissions due to
+     * the default value the permissions start out with before the configuration is applied.
+     * For details see {@link ConfigurableFilePermissions}.
+     *
+     * @param configureAction The configuration that gets applied to the newly created {@code FilePermissions}.
+     *
+     * @since 8.3
+     */
+    ConfigurableFilePermissions directoryPermissions(Action<? super ConfigurableFilePermissions> configureAction);
+
+    /**
+     * Creates file/directory access permissions and initializes them via a Unix style permission string.
+     * For details see {@link ConfigurableFilePermissions#unix(String)}.
+     * <p>
+     * Doesn't have separate variants for files and directories, like other configuration methods,
+     * because the Unix style permission input completely overwrites the default values, so
+     * the distinction doesn't matter.
+     *
+     * @since 8.3
+     */
+    ConfigurableFilePermissions permissions(String unixNumericOrSymbolic);
+
+    /**
+     * Creates file/directory access permissions and initializes them via a Unix style numeric permissions.
+     * For details see {@link ConfigurableFilePermissions#unix(int)}.
+     * <p>
+     * Doesn't have separate variants for files and directories, like other configuration methods,
+     * because the Unix style permission input completely overwrites the default values, so
+     * the distinction doesn't matter.
+     *
+     * @since 8.3
+     */
+    ConfigurableFilePermissions permissions(int unixNumeric);
+
+    /**
+     * {@link Provider} based version of {@link #permissions(String)},  to facilitate wiring into property chains.
+     *
+     * @since 8.3
+     */
+    Provider<ConfigurableFilePermissions> permissions(Provider<String> permissions);
 }
